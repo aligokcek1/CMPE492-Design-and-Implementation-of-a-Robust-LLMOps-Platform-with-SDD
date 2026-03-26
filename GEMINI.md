@@ -19,7 +19,7 @@ cd src && pytest && ruff check .
 
 ## Code Style
 
-Python 3.11: Follow standard standard conventions (PEP 8, Black/Ruff formatting).
+Python 3.11 (Backend), Streamlit (Frontend): Follow standard conventions
 
 ## Recent Changes
 - 004-robust-model-upload: Added Python 3.11 + Streamlit (Frontend), FastAPI (Backend), huggingface_hub
