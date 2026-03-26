@@ -7,16 +7,16 @@
 
 ## Summary
 
-Implement a robust, browser-based web application workflow allowing users to authenticate with Hugging Face, securely upload local model directories directly to Hugging Face Hub (with retry mechanisms), select existing models, and simulate deployment to GCP with CPU or GPU options.
+Implement a robust web application workflow allowing users to authenticate with Hugging Face, securely upload local model directories directly to Hugging Face Hub (with retry mechanisms), select existing models, and simulate deployment to GCP with CPU or GPU options. The user interface will be built using Streamlit to provide a basic but highly functional experience, interacting with a FastAPI backend for core logic.
 
 ## Technical Context
 
-**Language/Version**: Python 3.11 (Backend), TypeScript / React (Frontend)
-**Primary Dependencies**: FastAPI, huggingface_hub (Backend) / Vite, axios (Frontend)
+**Language/Version**: Python 3.11
+**Primary Dependencies**: Streamlit (Frontend), FastAPI (Backend), huggingface_hub
 **Storage**: N/A (Hugging Face Hub acts as storage)
-**Testing**: pytest, pytest-asyncio (Backend) / vitest, React Testing Library (Frontend)
-**Target Platform**: Web browsers (Chrome, Firefox, Safari)
-**Project Type**: Web Application (Frontend + Backend)
+**Testing**: pytest, pytest-asyncio, streamlit.testing
+**Target Platform**: Web browsers
+**Project Type**: Web Application (Streamlit Frontend + FastAPI Backend)
 **Performance Goals**: Support uploading up to 10GB models, 95% first-attempt success rate, 99% with retries.
 **Constraints**: 5-minute end-to-end active user interaction. Robust retry mechanism for large uploads. No dockerfile generation needed.
 **Scale/Scope**: Enterprise scale design, single directory upload support.
@@ -25,10 +25,10 @@ Implement a robust, browser-based web application workflow allowing users to aut
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-- [x] Security: No key exposure, checked for client-side exposure. (Will be evaluated during design)
+- [x] Security: No key exposure, checked for client-side exposure. (Streamlit runs server-side, reducing client-side exposure risks. HF tokens will be securely managed in session state or backend).
 - [x] Dependencies: Directly uses frameworks/libraries without redundant wrappers.
 - [x] Testing: TDD approach planned (Red-Green-Refactor), using realistic environments.
-- [x] Simplicity: Approach is as simple as possible and impacts minimal code.
+- [x] Simplicity: Approach is as simple as possible and impacts minimal code. Streamlit significantly simplifies UI development.
 
 ## Project Structure
 
@@ -65,13 +65,17 @@ backend/
 
 frontend/
 ├── src/
+│   ├── app.py
 │   ├── components/
-│   ├── pages/
+│   │   ├── auth.py
+│   │   ├── upload.py
+│   │   └── deploy.py
 │   └── services/
+│       └── api_client.py
 └── tests/
 ```
 
-**Structure Decision**: Selected the web application structure (frontend + backend) to securely handle Hugging Face tokens and API calls on the backend while providing a robust upload interface on the frontend.
+**Structure Decision**: Selected the web application structure. Streamlit for a basic, Python-native frontend that simplifies UI iteration, and FastAPI for the backend to securely handle Hugging Face interactions and mock GCP deployments.
 
 ## Complexity Tracking
 

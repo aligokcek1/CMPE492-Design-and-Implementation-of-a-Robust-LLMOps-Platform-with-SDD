@@ -3,8 +3,8 @@
 Auto-generated from all feature plans. Last updated: 2026-03-26
 
 ## Active Technologies
-
-- Python 3.11 (Backend), TypeScript / React (Frontend) + FastAPI, huggingface_hub (Backend) / Vite, axios (Frontend) (004-robust-model-upload)
+- Python 3.11 + Streamlit (Frontend), FastAPI (Backend), huggingface_hub (004-robust-model-upload)
+- N/A (Hugging Face Hub acts as storage) (004-robust-model-upload)
 
 ## Project Structure
 
@@ -15,15 +15,14 @@ tests/
 
 ## Commands
 
-cd src [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLOGIES] pytest [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLOGIES] ruff check .
+cd src && pytest && ruff check .
 
 ## Code Style
 
-Python 3.11 (Backend), TypeScript / React (Frontend): Follow standard conventions
+Python 3.11: Follow standard standard conventions (PEP 8, Black/Ruff formatting).
 
 ## Recent Changes
-
-- 004-robust-model-upload: Added Python 3.11 (Backend), TypeScript / React (Frontend) + FastAPI, huggingface_hub (Backend) / Vite, axios (Frontend)
+- 004-robust-model-upload: Added Python 3.11 + Streamlit (Frontend), FastAPI (Backend), huggingface_hub
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
