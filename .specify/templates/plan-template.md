@@ -31,10 +31,7 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-- [ ] Security: No key exposure, checked for client-side exposure.
-- [ ] Dependencies: Directly uses frameworks/libraries without redundant wrappers.
-- [ ] Testing: TDD approach planned (Red-Green-Refactor), using realistic environments.
-- [ ] Simplicity: Approach is as simple as possible and impacts minimal code.
+[Gates determined based on constitution file]
 
 ## Project Structure
 
