@@ -1,0 +1,90 @@
+openapi: 3.0.3
+info:
+  title: LLMOps Platform Backend API
+  version: 1.0.0
+  description: Internal API contract between the React frontend and the FastAPI backend.
+
+paths:
+  /api/auth/verify:
+    post:
+      summary: Verify Hugging Face Access Token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                  description: Hugging Face user access token
+      responses:
+        '200':
+          description: Token is valid
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  username:
+                    type: string
+        '401':
+          description: Invalid token
+
+  /api/upload/start:
+    post:
+      summary: Start a directory upload session to Hugging Face
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                repository_id:
+                  type: string
+                  description: Target Hugging Face repository (username/repo-name)
+                files_metadata:
+                  type: array
+                  items:
+                    type: string
+                  description: List of relative file paths to be uploaded
+      responses:
+        '200':
+          description: Session started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+
+  /api/deployment/mock:
+    post:
+      summary: Simulate GCP Deployment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model_repository:
+                  type: string
+                resource_type:
+                  type: string
+                  enum: [CPU, GPU]
+      responses:
+        '200':
+          description: Mock deployment successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "mock_success"
+                  message:
+                    type: string
