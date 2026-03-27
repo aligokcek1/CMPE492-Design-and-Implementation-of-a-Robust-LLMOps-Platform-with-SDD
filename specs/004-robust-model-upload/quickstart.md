@@ -18,7 +18,7 @@ This guide explains how to set up the development environment for the Robust Mod
    ```
 3. Install dependencies:
    ```bash
-   pip install fastapi uvicorn huggingface_hub pytest pytest-asyncio
+   pip install -r requirements.txt
    ```
 4. Run the development server:
    ```bash
@@ -37,7 +37,7 @@ This guide explains how to set up the development environment for the Robust Mod
    ```
 3. Install dependencies:
    ```bash
-   pip install streamlit requests pytest
+   pip install -r requirements.txt
    ```
 4. Run the development server:
    ```bash
