@@ -1,0 +1,212 @@
+openapi: 3.0.3
+info:
+  title: LLMOps Platform Backend API
+  version: 1.1.0
+  description: >
+    Internal API contract between the Streamlit frontend and the FastAPI backend.
+    v1.1.0 adds multi-folder upload support (via filename path prefixes) and a
+    public model metadata endpoint.
+
+paths:
+  /api/auth/verify:
+    post:
+      summary: Verify Hugging Face Access Token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  description: Hugging Face user access token
+      responses:
+        '200':
+          description: Token is valid
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  username:
+                    type: string
+        '401':
+          description: Invalid or expired token
+
+  /api/upload/start:
+    post:
+      summary: Upload one or more folders to a Hugging Face repository
+      description: >
+        Accepts a target repository ID and one or more files as multipart form data.
+        Files destined for a specific subdirectory MUST have their `filename` field
+        set to `<folder_name>/<original_filename>` (e.g., `my_weights/model.bin`).
+        Files with no folder prefix are placed at the repository root.
+        The backend reconstructs the directory tree in a temp directory and then
+        calls `upload_folder` once for the entire batch.
+        Path traversal segments (`..`) and absolute paths in filenames are rejected.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [repository_id, files]
+              properties:
+                repository_id:
+                  type: string
+                  description: Target HF repository ID in `owner/repo-name` format
+                  example: "alice/my-model"
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                  description: >
+                    One or more files. Each file's `filename` field may include
+                    a single folder prefix (e.g., `weights/model.bin`).
+      responses:
+        '200':
+          description: Upload completed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+                    format: uuid
+        '400':
+          description: Filename contains path traversal or invalid characters
+        '401':
+          description: Missing or invalid Authorization header
+        '403':
+          description: HF token lacks write permission for the target repository
+        '409':
+          description: Repository conflict (repo owned by a different user)
+        '500':
+          description: Unexpected upload error
+
+  /api/models:
+    get:
+      summary: List the authenticated user's HF model repositories
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+          description: "Bearer <hf_token>"
+      responses:
+        '200':
+          description: List of user-owned model repositories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      description: Full repository ID (owner/repo-name)
+                    name:
+                      type: string
+        '401':
+          description: Missing or invalid Authorization header
+
+  /api/models/public:
+    get:
+      summary: Fetch metadata for a public Hugging Face model repository
+      description: >
+        Returns metadata for a publicly accessible model repository without
+        requiring write permissions. Used to validate and preview a public repo
+        before triggering a mock deployment.
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+          description: "Bearer <hf_token> (used for authentication; not needed to access the public repo itself)"
+        - in: query
+          name: repo_id
+          required: true
+          schema:
+            type: string
+          description: Full repository identifier in `owner/repo-name` format
+          example: "bert-base-uncased"
+      responses:
+        '200':
+          description: Repository metadata fetched successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  repo_id:
+                    type: string
+                    example: "bert-base-uncased"
+                  author:
+                    type: string
+                    example: "google-bert"
+                  description:
+                    type: string
+                    nullable: true
+                  file_count:
+                    type: integer
+                    example: 12
+                  size_bytes:
+                    type: integer
+                    nullable: true
+                    description: Total size of all files in bytes; null if any file lacks size data
+        '400':
+          description: repo_id does not match owner/repo-name format
+        '401':
+          description: Missing or invalid Authorization header
+        '403':
+          description: Repository exists but is private
+        '404':
+          description: Repository not found
+
+  /api/deployment/mock:
+    post:
+      summary: Simulate GCP deployment for a model (mock)
+      description: >
+        Accepts any valid Hugging Face repository ID (user-owned or public) and
+        resource type. Applies a ~2-second artificial delay then returns a
+        mock_success response. No real infrastructure is provisioned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model_repository, resource_type]
+              properties:
+                model_repository:
+                  type: string
+                  description: HF repository ID to "deploy" (user-owned or public)
+                  example: "alice/my-model"
+                resource_type:
+                  type: string
+                  enum: [CPU, GPU]
+      responses:
+        '200':
+          description: Mock deployment completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "mock_success"
+                  message:
+                    type: string
+                    example: "Mock deployment of 'alice/my-model' on CPU completed successfully."
+        '401':
+          description: Missing or invalid Authorization header
+        '422':
+          description: Invalid resource_type value

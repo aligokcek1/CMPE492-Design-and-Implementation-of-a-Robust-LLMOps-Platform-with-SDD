@@ -1,4 +1,3 @@
-import uuid
 from enum import Enum
 from pydantic import BaseModel, field_validator
 import re
@@ -40,5 +39,20 @@ class UploadStartRequest(BaseModel):
     files_metadata: list[str] = []
 
 
+class FolderUploadResult(BaseModel):
+    folder_name: str
+    status: str
+    error: str | None = None
+
+
 class UploadStartResponse(BaseModel):
     session_id: str
+    folder_results: list[FolderUploadResult] = []
+
+
+class PublicModelInfoResponse(BaseModel):
+    repo_id: str
+    author: str
+    description: str | None = None
+    file_count: int
+    size_bytes: int | None = None

@@ -1,28 +1,70 @@
 # CMPE492-Design-and-Implementation-of-a-Robust-LLMOps-Platform Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-03-26
+Auto-generated from all feature plans. Last updated: 2026-04-07
 
 ## Active Technologies
-- Python 3.11 + Streamlit (Frontend), FastAPI (Backend), huggingface_hub (004-robust-model-upload)
-- N/A (Hugging Face Hub acts as storage) (004-robust-model-upload)
+- Python 3.11 (Backend + Frontend)
+- FastAPI 0.135, Pydantic 2.12, huggingface_hub 1.7, Streamlit 1.55
+- pytest, pytest-asyncio, httpx (backend contract tests); pytest + streamlit.testing.v1 (frontend integration tests)
+- No persistent storage — temp filesystem during upload only; HF Hub as the destination
 
 ## Project Structure
 
 ```text
-src/
-tests/
+backend/
+├── src/
+│   ├── main.py                    # FastAPI app entry point
+│   ├── api/
+│   │   ├── auth.py                # POST /api/auth/verify
+│   │   ├── deployment.py          # POST /api/deployment/mock
+│   │   ├── errors.py              # Global error handler
+│   │   ├── models.py              # GET /api/models, GET /api/models/public
+│   │   └── upload.py              # POST /api/upload/start (multi-folder, path sanitisation)
+│   ├── models/
+│   │   ├── auth.py
+│   │   ├── deployment.py
+│   │   └── upload.py              # UploadStartResponse, FolderUploadResult, PublicModelInfoResponse
+│   └── services/
+│       ├── huggingface.py         # verify_hf_token, upload_model_folder, fetch_public_model_info, list_user_models
+│       └── mock_gcp.py
+└── tests/contract/
+    ├── test_auth_api.py
+    ├── test_deployment_api.py
+    ├── test_models_api.py         # Includes public model info tests (200/400/401/403/404)
+    └── test_upload_api.py         # Includes multi-folder, path traversal, size limit tests
+
+frontend/
+├── conftest.py                    # sys.path setup for pytest
+├── src/
+│   ├── app.py                     # Streamlit entry point — tabs: Upload, Select, Deploy
+│   ├── components/
+│   │   ├── auth.py                # Login form
+│   │   ├── deploy.py              # render_deployment_section, render_public_repo_deploy_section
+│   │   └── upload.py              # Native directory picker + individual file uploader
+│   └── services/
+│       └── api_client.py          # start_upload, list_models, fetch_public_model_info, mock_deploy
+└── tests/integration/
+    └── test_workflow.py           # End-to-end Streamlit AppTest tests
 ```
 
 ## Commands
 
-cd src && pytest && ruff check .
+```bash
+cd backend && pytest            # Backend contract tests (24 tests)
+cd frontend && pytest           # Frontend integration tests (11 tests)
+cd backend && ruff check .      # Lint backend
+cd frontend && ruff check .     # Lint frontend
+cd backend && uvicorn src.main:app --reload   # Run backend dev server
+cd frontend && streamlit run src/app.py       # Run frontend dev server
+```
 
 ## Code Style
 
-Python 3.11 (Backend), Streamlit (Frontend): Follow standard conventions
+Python 3.11: Follow standard conventions. Ruff for linting.
 
-## Recent Changes
-- 004-robust-model-upload: Added Python 3.11 + Streamlit (Frontend), FastAPI (Backend), huggingface_hub
+## Key Features (implemented)
+- **004-robust-model-upload**: HF token auth, single-file model upload, model listing, mock GCP deployment
+- **005-folder-upload-repo-deploy**: Native directory picker upload (Streamlit `accept_multiple_files="directory"`), multi-folder per-folder error isolation, public repo metadata fetch (`GET /api/models/public`), public repo mock deployment, upload size limit (5 GB), path traversal protection
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

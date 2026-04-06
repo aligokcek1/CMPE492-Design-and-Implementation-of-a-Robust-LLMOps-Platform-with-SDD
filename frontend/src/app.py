@@ -12,7 +12,7 @@ import streamlit as st
 
 from src.components.auth import render_login
 from src.components.upload import render_upload_section, render_model_selector
-from src.components.deploy import render_deployment_section
+from src.components.deploy import render_deployment_section, render_public_repo_deploy_section
 
 st.set_page_config(
     page_title="LLMOps Platform",
@@ -78,6 +78,13 @@ def main() -> None:
             render_deployment_section()
         except Exception as exc:
             st.error(f"An unexpected error occurred in the deployment section: {exc}")
+
+        st.divider()
+
+        try:
+            render_public_repo_deploy_section()
+        except Exception as exc:
+            st.error(f"An unexpected error occurred in the public deploy section: {exc}")
 
 
 if __name__ == "__main__":

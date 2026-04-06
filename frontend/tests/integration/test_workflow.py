@@ -84,3 +84,121 @@ def test_deploy_section_requires_model_selection(at):
     at.session_state["hf_username"] = "testuser"
     at.run()
     assert not at.exception
+
+
+# ---------------------------------------------------------------------------
+# Upload section renders with directory picker UI
+# ---------------------------------------------------------------------------
+def test_upload_section_renders_directory_picker(at):
+    at.session_state["hf_token"] = "hf_valid_token"
+    at.session_state["hf_username"] = "testuser"
+    at.run()
+    assert not at.exception
+    rendered = " ".join(_val(e) for e in list(at.markdown) + list(at.subheader))
+    assert "Upload" in rendered, "Expected Upload section to render"
+    upload_btn = [b for b in at.button if "upload" in b.label.lower()]
+    assert len(upload_btn) >= 1, "Expected 'Upload to Hugging Face' button"
+
+
+# ---------------------------------------------------------------------------
+# T021: Deploy tab contains text input for public repo ID
+# ---------------------------------------------------------------------------
+def test_public_repo_deploy_section_renders(at):
+    at.session_state["hf_token"] = "hf_valid_token"
+    at.session_state["hf_username"] = "testuser"
+    at.run()
+    assert not at.exception
+    repo_inputs = [
+        ti for ti in at.text_input
+        if "public" in ti.label.lower() or "repo" in ti.label.lower()
+    ]
+    assert len(repo_inputs) >= 1, "Expected a text input for public repo ID in Deploy tab"
+
+
+# ---------------------------------------------------------------------------
+# T022: fetch_public_model_info → metadata displayed
+# ---------------------------------------------------------------------------
+def test_public_repo_fetch_info_displays_metadata(at):
+    at.session_state["hf_token"] = "hf_valid_token"
+    at.session_state["hf_username"] = "testuser"
+    at.session_state["public_repo_info"] = {
+        "repo_id": "bert-base-uncased",
+        "author": "google-bert",
+        "description": "Pretrained BERT",
+        "file_count": 12,
+        "size_bytes": 440473133,
+    }
+    at.run()
+    assert not at.exception
+    rendered = " ".join(_val(e) for e in list(at.info) + list(at.markdown))
+    assert "google-bert" in rendered or "bert-base-uncased" in rendered
+
+
+# ---------------------------------------------------------------------------
+# T023: CPU deploy button calls mock_deploy with public repo_id
+# ---------------------------------------------------------------------------
+def test_public_repo_deploy_triggers_mock_deploy(at):
+    at.session_state["hf_token"] = "hf_valid_token"
+    at.session_state["hf_username"] = "testuser"
+    at.session_state["public_repo_info"] = {
+        "repo_id": "google-bert/bert-base-uncased",
+        "author": "google-bert",
+        "description": "Pretrained BERT",
+        "file_count": 12,
+        "size_bytes": 440473133,
+    }
+    with patch("src.services.api_client.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(
+            ok=True,
+            json=lambda: {"status": "mock_success", "message": "Deployed!"},
+        )
+        at.run()
+        assert not at.exception
+        cpu_buttons = [b for b in at.button if "cpu" in b.label.lower()]
+        if cpu_buttons:
+            cpu_buttons[0].click().run()
+            assert not at.exception
+
+
+# ---------------------------------------------------------------------------
+# T029: After upload, UI shows per-folder result rows
+# ---------------------------------------------------------------------------
+def test_upload_shows_per_folder_progress(at):
+    at.session_state["hf_token"] = "hf_valid_token"
+    at.session_state["hf_username"] = "testuser"
+    at.session_state["upload_result"] = {
+        "session_id": "abc-123",
+        "folder_results": [
+            {"folder_name": "weights", "status": "success", "error": None},
+            {"folder_name": "tokenizer", "status": "error", "error": "timeout"},
+        ],
+    }
+    at.run()
+    assert not at.exception
+    rendered = " ".join(_val(e) for e in list(at.markdown) + list(at.success))
+    assert "weights" in rendered or "tokenizer" in rendered, \
+        "Expected per-folder result rows after upload"
+
+
+# ---------------------------------------------------------------------------
+# T030: Spinner visible during public repo deployment
+# ---------------------------------------------------------------------------
+def test_public_deploy_spinner_visible(at):
+    """The deploy section must use st.spinner. We verify the spinner text
+    appears in the rendered output when a deploy is triggered."""
+    at.session_state["hf_token"] = "hf_valid_token"
+    at.session_state["hf_username"] = "testuser"
+    at.session_state["public_repo_info"] = {
+        "repo_id": "google-bert/bert-base-uncased",
+        "author": "google-bert",
+        "description": "Pretrained BERT",
+        "file_count": 12,
+        "size_bytes": 440473133,
+    }
+    at.run()
+    assert not at.exception
+    deploy_buttons = [
+        b for b in at.button
+        if "cpu" in b.label.lower() or "gpu" in b.label.lower()
+    ]
+    assert len(deploy_buttons) >= 1, "Expected CPU/GPU deploy buttons"

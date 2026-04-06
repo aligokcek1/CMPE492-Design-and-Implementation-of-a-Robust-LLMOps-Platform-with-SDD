@@ -31,11 +31,15 @@ def verify_token(token: str) -> dict[str, Any]:
 
 
 def start_upload(token: str, repository_id: str, uploaded_files: list) -> dict[str, Any]:
-    """Send files as multipart form data so the backend can write them to a
-    temp directory before calling huggingface_hub.upload_folder."""
+    """Send files as multipart form data.
+
+    ``uploaded_files`` is a list of ``(filename, UploadedFile)`` tuples.
+    The *filename* may contain path separators (e.g. ``weights/model.bin``)
+    to create subdirectories in the target repository.
+    """
     multipart_files = [
-        ("files", (uf.name, uf.getvalue(), "application/octet-stream"))
-        for uf in uploaded_files
+        ("files", (name, uf.getvalue(), "application/octet-stream"))
+        for name, uf in uploaded_files
     ]
     response = requests.post(
         f"{BACKEND_URL}/api/upload/start",
@@ -53,6 +57,17 @@ def list_models(token: str) -> list[dict[str, Any]]:
         f"{BACKEND_URL}/api/models",
         headers={"Authorization": f"Bearer {token}"},
         timeout=30,
+    )
+    _raise_for_status(response)
+    return response.json()
+
+
+def fetch_public_model_info(token: str, repo_id: str) -> dict[str, Any]:
+    response = requests.get(
+        f"{BACKEND_URL}/api/models/public",
+        params={"repo_id": repo_id},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=15,
     )
     _raise_for_status(response)
     return response.json()
