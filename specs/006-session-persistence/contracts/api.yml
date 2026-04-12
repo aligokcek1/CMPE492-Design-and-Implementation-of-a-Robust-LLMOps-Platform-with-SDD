@@ -1,0 +1,235 @@
+openapi: 3.0.3
+info:
+  title: LLMOps Platform Backend API
+  version: 1.2.0
+  description: >
+    Internal API contract between Streamlit frontend and FastAPI backend.
+    v1.2.0 introduces backend-managed persistent sessions with sliding expiration,
+    current-device logout, and idempotency support for side-effect operations.
+
+paths:
+  /api/auth/verify:
+    post:
+      summary: Verify Hugging Face token and issue platform session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  description: Hugging Face access token
+      responses:
+        '200':
+          description: Token verified and session issued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [username, session_token, expires_at, inactivity_timeout_seconds]
+                properties:
+                  username:
+                    type: string
+                  session_token:
+                    type: string
+                    description: Opaque platform session token for subsequent protected requests
+                  expires_at:
+                    type: string
+                    format: date-time
+                  inactivity_timeout_seconds:
+                    type: integer
+                    example: 86400
+        '401':
+          description: Invalid or unauthorized Hugging Face token
+
+  /api/auth/session:
+    get:
+      summary: Validate and renew current platform session
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+          description: "Bearer <platform_session_token>"
+      responses:
+        '200':
+          description: Session is active and renewed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [username, session_token, expires_at]
+                properties:
+                  username:
+                    type: string
+                  session_token:
+                    type: string
+                  expires_at:
+                    type: string
+                    format: date-time
+        '401':
+          description: Session missing, expired, or revoked
+
+  /api/auth/logout:
+    post:
+      summary: Revoke current platform session
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+          description: "Bearer <platform_session_token>"
+      responses:
+        '200':
+          description: Current session revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: logged_out
+        '401':
+          description: Session missing, expired, or already invalid
+
+  /api/models:
+    get:
+      summary: List authenticated user's model repositories
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+          description: "Bearer <platform_session_token>"
+      responses:
+        '200':
+          description: Model list returned
+        '401':
+          description: Missing, expired, or invalid session
+
+  /api/models/public:
+    get:
+      summary: Fetch metadata for a public Hugging Face model repository
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+          description: "Bearer <platform_session_token>"
+        - in: query
+          name: repo_id
+          required: true
+          schema:
+            type: string
+            example: "owner/repo-name"
+      responses:
+        '200':
+          description: Public repository metadata fetched
+        '400':
+          description: Invalid repo_id format
+        '401':
+          description: Missing, expired, or invalid session
+        '403':
+          description: Repository is private
+        '404':
+          description: Repository not found
+
+  /api/upload/start:
+    post:
+      summary: Upload model files/folders to Hugging Face repository
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+          description: "Bearer <platform_session_token>"
+        - in: header
+          name: X-Idempotency-Key
+          required: false
+          schema:
+            type: string
+          description: Optional dedupe key for retry-safe side-effect requests
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [repository_id, files]
+              properties:
+                repository_id:
+                  type: string
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '200':
+          description: Upload accepted/completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+                    format: uuid
+                  folder_results:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          description: Missing, expired, or invalid session
+        '409':
+          description: Idempotency key conflict or repository conflict
+        '413':
+          description: Total upload size exceeds platform limit
+
+  /api/deployment/mock:
+    post:
+      summary: Simulate model deployment
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+          description: "Bearer <platform_session_token>"
+        - in: header
+          name: X-Idempotency-Key
+          required: false
+          schema:
+            type: string
+          description: Optional dedupe key for retry-safe side-effect requests
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model_repository, resource_type]
+              properties:
+                model_repository:
+                  type: string
+                resource_type:
+                  type: string
+                  enum: [CPU, GPU]
+      responses:
+        '200':
+          description: Mock deployment completed
+        '401':
+          description: Missing, expired, or invalid session
+        '409':
+          description: Idempotency key conflict
+        '422':
+          description: Invalid request payload

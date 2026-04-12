@@ -1,12 +1,10 @@
 # CMPE492-Design-and-Implementation-of-a-Robust-LLMOps-Platform Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-07
+Auto-generated from all feature plans. Last updated: 2026-04-12
 
 ## Active Technologies
-- Python 3.11 (Backend + Frontend)
-- FastAPI 0.135, Pydantic 2.12, huggingface_hub 1.7, Streamlit 1.55
-- pytest, pytest-asyncio, httpx (backend contract tests); pytest + streamlit.testing.v1 (frontend integration tests)
-- No persistent storage — temp filesystem during upload only; HF Hub as the destination
+- Python 3.11 (backend + frontend) + FastAPI 0.135, Pydantic 2.12, huggingface_hub 1.7, Streamlit 1.55, pytest, pytest-asyncio, httpx (006-session-persistence)
+- In-memory backend session registry (process-local) + browser cookie/local persisted session token for Streamlit client continuity; no database (006-session-persistence)
 
 ## Project Structure
 
@@ -68,3 +66,6 @@ Python 3.11: Follow standard conventions. Ruff for linting.
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
+
+## Recent Changes
+- 006-session-persistence: Added Python 3.11 (backend + frontend) + FastAPI 0.135, Pydantic 2.12, huggingface_hub 1.7, Streamlit 1.55, pytest, pytest-asyncio, httpx
