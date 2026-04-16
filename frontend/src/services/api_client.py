@@ -126,3 +126,40 @@ def mock_deploy(
     )
     _raise_for_status(response)
     return response.json()
+
+
+def save_gcp_credentials(
+    session_token: str,
+    service_account_json: str,
+    billing_account_id: str,
+) -> dict[str, Any]:
+    response = requests.post(
+        f"{BACKEND_URL}/api/gcp/credentials",
+        json={
+            "service_account_json": service_account_json,
+            "billing_account_id": billing_account_id,
+        },
+        headers=_session_headers(session_token),
+        timeout=30,
+    )
+    _raise_for_status(response)
+    return response.json()
+
+
+def get_gcp_credentials_status(session_token: str) -> dict[str, Any]:
+    response = requests.get(
+        f"{BACKEND_URL}/api/gcp/credentials",
+        headers=_session_headers(session_token),
+        timeout=15,
+    )
+    _raise_for_status(response)
+    return response.json()
+
+
+def delete_gcp_credentials(session_token: str) -> None:
+    response = requests.delete(
+        f"{BACKEND_URL}/api/gcp/credentials",
+        headers=_session_headers(session_token),
+        timeout=30,
+    )
+    _raise_for_status(response)

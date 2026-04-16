@@ -13,6 +13,7 @@ import streamlit as st  # noqa: E402
 from src.components.auth import render_login  # noqa: E402
 from src.components.upload import render_upload_section, render_model_selector  # noqa: E402
 from src.components.deploy import render_deployment_section, render_public_repo_deploy_section  # noqa: E402
+from src.components.gcp_credentials import render_gcp_credentials_section  # noqa: E402
 from src.services.api_client import APIError, get_session_status, logout  # noqa: E402
 from src.services.session_client import (  # noqa: E402
     clear_session,
@@ -104,8 +105,8 @@ def main() -> None:
         "then proceed to **deploy** it."
     )
 
-    tab_upload, tab_select, tab_deploy = st.tabs(
-        ["📤 Upload Model", "🔍 Select Existing", "🚀 Deploy"]
+    tab_upload, tab_select, tab_deploy, tab_gcp = st.tabs(
+        ["📤 Upload Model", "🔍 Select Existing", "🚀 Deploy", "☁️ GCP Credentials"]
     )
 
     with tab_upload:
@@ -132,6 +133,12 @@ def main() -> None:
             render_public_repo_deploy_section()
         except Exception as exc:
             st.error(f"An unexpected error occurred in the public deploy section: {exc}")
+
+    with tab_gcp:
+        try:
+            render_gcp_credentials_section()
+        except Exception as exc:
+            st.error(f"An unexpected error occurred in the GCP credentials section: {exc}")
 
 
 if __name__ == "__main__":
