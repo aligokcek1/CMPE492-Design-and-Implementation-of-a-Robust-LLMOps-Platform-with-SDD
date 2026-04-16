@@ -6,11 +6,12 @@ alwaysApply: true
 
 # CMPE492-Design-and-Implementation-of-a-Robust-LLMOps-Platform Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-12
+Auto-generated from all feature plans. Last updated: 2026-04-16
 
 ## Active Technologies
 - Python 3.11 (backend + frontend) + FastAPI 0.135, Pydantic 2.12, huggingface_hub 1.7, Streamlit 1.55, pytest, pytest-asyncio, httpx (006-session-persistence)
 - In-memory backend session registry (process-local) + browser cookie-persisted session token for Streamlit client continuity; no database (006-session-persistence)
+- SQLite file at `backend/data/llmops.db` (2 tables: `gcp_credentials`, `deployments`). Service-account JSON encrypted with Fernet; key read from `LLMOPS_ENCRYPTION_KEY` env var. (007-gke-inference-pipeline)
 
 ## Project Structure
 
@@ -58,13 +59,27 @@ frontend/
 ## Commands
 
 ```bash
-cd backend && pytest            # Backend contract tests (currently 32 tests)
-cd frontend && pytest           # Frontend integration tests (currently 13 tests)
+cd backend && pytest            # Backend contract + integration tests (FakeGCPProvider — no cloud calls)
+cd frontend && pytest           # Frontend integration tests
 cd backend && ruff check .      # Lint backend
 cd frontend && ruff check .     # Lint frontend
 cd backend && uvicorn src.main:app --reload   # Run backend dev server
 cd frontend && streamlit run src/app.py       # Run frontend dev server
+
+# Opt-in manifest validation against a real Kubernetes API server using server-side dry-run.
+# Requires a scratch kubeconfig; NEVER creates real resources (dry_run=["All"]).
+LLMOPS_K8S_DRYRUN_KUBECONFIG=~/.kube/scratch-config \
+  cd backend && pytest tests/dryrun
 ```
+
+## Testing Policy (mandatory)
+
+- **Tests MUST NOT call real cloud services.** The default `pytest` run touches zero GCP APIs, creates zero projects, launches zero clusters, incurs zero cost.
+- The GCP boundary is crossed only through the `GCPProvider` protocol. Tests inject `FakeGCPProvider`; production injects `RealGCPProvider`. No test may import `RealGCPProvider`.
+- Where a real-fidelity check is desired, prefer **dry-run** over live side effects:
+  - **Kubernetes manifests**: validate with the Python `kubernetes` client using `dry_run=["All"]` (server-side dry-run). Gated on `LLMOPS_K8S_DRYRUN_KUBECONFIG` — suite is skipped when unset. Still does not touch GCP.
+  - **GCP Resource Manager / Billing / GKE cluster create**: these APIs expose no dry-run flag. Do NOT invent a "live smoke" suite that calls them; rely on the fake + manual end-to-end verification before release.
+- CI runs `pytest` with no cloud env vars set. Any test that requires network access to a cloud endpoint is either (a) gated behind an env var and skipped by default, or (b) rejected in review.
 
 ## Code Style
 
@@ -79,4 +94,5 @@ Python 3.11: Follow standard conventions. Ruff for linting.
 <!-- MANUAL ADDITIONS END -->
 
 ## Recent Changes
+- 007-gke-inference-pipeline: Added Python 3.11 (backend + frontend)
 - 006-session-persistence: Implemented backend-managed session lifecycle, session restore endpoint, current-device logout, idempotent upload/deploy retries, and browser cookie-backed frontend session persistence
