@@ -97,7 +97,17 @@ class DeploymentOrchestrator:
         # ``create_project`` itself fails, there is nothing to tear down —
         # and attempting a delete would just produce a second misleading
         # PermissionDenied traceback.
+        #
+        # We also track whether the GKE cluster came up. Cluster bring-up on
+        # Autopilot takes ~15-25 minutes; once it succeeds, throwing it away
+        # on a downstream manifest-apply / endpoint-resolve failure is a
+        # terrible UX (esp. for transient kube-apply errors). We instead
+        # leave the project in place and surface a ``failed`` status with a
+        # message telling the user to delete via the UI when they're ready,
+        # which still tears down the project end-to-end (FR-009 is satisfied
+        # via that explicit user-driven path rather than auto-cleanup).
         project_created = False
+        cluster_created = False
 
         try:
             await _wrap(
@@ -134,6 +144,7 @@ class DeploymentOrchestrator:
                 ),
                 user_id=user_id,
             )
+            cluster_created = True
             set_status("deploying", "Refreshing cluster credentials…")
 
             # Re-fetch the kubeconfig with a fresh token — the one bundled in
@@ -170,14 +181,32 @@ class DeploymentOrchestrator:
             raise
         except GCPProviderError as exc:
             logger.exception("Deployment %s failed: %s", deployment_id, exc)
-            set_status("failed", _format_failure_message(exc))
-            if project_created:
+            set_status("failed", _format_failure_message(exc, cluster_created=cluster_created))
+            if project_created and not cluster_created:
                 await _best_effort_rollback(provider, project_id)
+            elif cluster_created:
+                logger.info(
+                    "Deployment %s failed AFTER cluster %s was up — leaving the "
+                    "GCP project %s in place so the user can inspect / retry / "
+                    "delete via the UI (Autopilot bring-up is slow, auto-rollback "
+                    "would discard ~15-25 min of provisioning).",
+                    deployment_id, row.gke_cluster_name, project_id,
+                )
         except Exception as exc:  # noqa: BLE001 — capture final safety net
             logger.exception("Deployment %s failed with unexpected error.", deployment_id)
-            set_status("failed", f"Unexpected error: {exc}")
-            if project_created:
+            set_status(
+                "failed",
+                _format_unexpected_failure_message(exc, cluster_created=cluster_created),
+            )
+            if project_created and not cluster_created:
                 await _best_effort_rollback(provider, project_id)
+            elif cluster_created:
+                logger.info(
+                    "Deployment %s failed AFTER cluster %s was up — leaving the "
+                    "GCP project %s in place so the user can inspect / retry / "
+                    "delete via the UI.",
+                    deployment_id, row.gke_cluster_name, project_id,
+                )
 
     async def request_deletion(self, deployment_id: str, provider: GCPProvider) -> None:
         """Cancel any in-flight deploy + tear down the project."""
@@ -332,9 +361,33 @@ async def _apply_manifests_and_get_endpoint(
 
     await kube_client.apply_objects(cluster_handle.kubeconfig_yaml, manifest_yaml)
     safe = _safe_name(row.hf_model_id)
-    await kube_client.wait_deployment_available(
-        cluster_handle.kubeconfig_yaml, f"{safe}-vllm"
-    )
+
+    # Stream pod-level progress into deployment.status_message so the UI
+    # shows live state ("waiting for L4 node", "pulling image", "loading
+    # model", …) instead of a silent ~30-minute spinner.
+    deployment_id = row.id
+
+    def _live_status_update(message: str) -> None:
+        try:
+            deployment_store.update_status(
+                deployment_id=deployment_id,
+                status="deploying",
+                status_message=message,
+            )
+        except Exception:  # noqa: BLE001 — never let UI updates break the deploy
+            logger.exception("Failed to record live status for %s", deployment_id)
+
+    try:
+        await kube_client.wait_deployment_available(
+            cluster_handle.kubeconfig_yaml,
+            f"{safe}-vllm",
+            status_callback=_live_status_update,
+        )
+    except kube_client.GpuQuotaExhaustedError as exc:
+        # Translate into a structured GCPQuotaError so the failure-message
+        # formatter (and any future UI quota-banner logic) can recognise it.
+        raise GCPQuotaError(str(exc)) from exc
+
     ip = await kube_client.get_service_lb_ip(cluster_handle.kubeconfig_yaml, f"{safe}-svc")
     return f"http://{ip}:80"
 
@@ -380,16 +433,35 @@ async def _best_effort_rollback(provider: GCPProvider, project_id: str) -> None:
         logger.exception("Failed to roll back project %s; may require manual cleanup.", project_id)
 
 
-def _format_failure_message(exc: GCPProviderError) -> str:
+def _format_failure_message(exc: GCPProviderError, *, cluster_created: bool = False) -> str:
     if isinstance(exc, GCPQuotaError):
-        return f"Quota / billing limit hit: {exc.message}"
-    if isinstance(exc, GCPAuthError):
-        return f"GCP rejected the credentials: {exc.message}"
-    if isinstance(exc, GCPTransientError):
-        return f"Transient cloud error: {exc.message} (you may retry)"
-    if isinstance(exc, GCPNotFoundError):
-        return f"Missing resource during deploy: {exc.message}"
-    return exc.message
+        base = f"Quota / billing limit hit: {exc.message}"
+    elif isinstance(exc, GCPAuthError):
+        base = f"GCP rejected the credentials: {exc.message}"
+    elif isinstance(exc, GCPTransientError):
+        base = f"Transient cloud error: {exc.message} (you may retry)"
+    elif isinstance(exc, GCPNotFoundError):
+        base = f"Missing resource during deploy: {exc.message}"
+    else:
+        base = exc.message
+    return _maybe_append_cluster_hint(base, cluster_created=cluster_created)
+
+
+def _format_unexpected_failure_message(exc: Exception, *, cluster_created: bool = False) -> str:
+    return _maybe_append_cluster_hint(
+        f"Unexpected error: {exc}",
+        cluster_created=cluster_created,
+    )
+
+
+def _maybe_append_cluster_hint(message: str, *, cluster_created: bool) -> str:
+    if not cluster_created:
+        return message
+    return (
+        f"{message} The GKE cluster was already provisioned and has NOT been "
+        "auto-deleted. Click Delete in the Deployments tab to tear it down "
+        "fully when you're ready."
+    )
 
 
 __all__ = ["deployment_orchestrator", "DeploymentOrchestrator"]

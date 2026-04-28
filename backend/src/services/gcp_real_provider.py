@@ -640,16 +640,13 @@ def _build_kubeconfig(
 ) -> str:
     """Build a kubeconfig that authenticates using the stored service account.
 
-    The produced kubeconfig uses ``gcp-sa-auth`` exec-style auth: the
-    kubernetes client talks to the cluster using a short-lived OAuth token
-    minted from the SA JSON. For simplicity we embed the SA JSON inline as a
-    base64 blob in ``user.auth-provider.config``-style fields expected by our
-    helper, but most production-grade tooling prefers the ``exec`` plugin
-    pattern. We keep it simple: a plain token sourced from Python at
-    apply-time, written into the ``users[].user.token`` field right before
-    ``kubectl apply`` runs.
+    The produced kubeconfig uses a plain Bearer token minted from the SA JSON
+    at build-time and written into ``users[].user.token``. The kubernetes
+    Python client base64-decodes ``certificate-authority-data`` itself, so the
+    value MUST be the already-base64-encoded form that GKE returns from
+    ``master_auth.cluster_ca_certificate`` — re-encoding it produces invalid
+    PEM and triggers     ``[X509: NO_CERTIFICATE_OR_CRL_FOUND]`` at SSL handshake.
     """
-    import base64
     import json as _json
 
     import google.auth.transport.requests
@@ -662,7 +659,7 @@ def _build_kubeconfig(
     creds.refresh(google.auth.transport.requests.Request())
     token = creds.token or ""
 
-    b64_ca = base64.b64encode(ca_cert.encode("utf-8")).decode("ascii") if ca_cert else ""
+    ca_b64 = _normalize_ca_b64(ca_cert)
 
     return (
         "apiVersion: v1\n"
@@ -671,7 +668,7 @@ def _build_kubeconfig(
         f"- name: {cluster_name}\n"
         "  cluster:\n"
         f"    server: https://{endpoint}\n"
-        f"    certificate-authority-data: {b64_ca}\n"
+        f"    certificate-authority-data: {ca_b64}\n"
         "contexts:\n"
         f"- name: {cluster_name}-ctx\n"
         "  context:\n"
@@ -683,6 +680,37 @@ def _build_kubeconfig(
         f"    token: {token}\n"
         f"current-context: {cluster_name}-ctx\n"
     )
+
+
+def _normalize_ca_b64(ca_cert: str) -> str:
+    """Return the cluster CA in the base64 form expected by kubeconfig.
+
+    GKE's ``master_auth.cluster_ca_certificate`` is documented to return the
+    cert *already* base64-encoded, so the common case is to pass it straight
+    through (after stripping any whitespace/newlines that crept in). If we
+    ever receive the cert in raw PEM form (e.g. starting with
+    ``-----BEGIN CERTIFICATE-----``), we base64-encode it once. We never
+    encode twice.
+    """
+    import base64
+    import binascii
+
+    if not ca_cert:
+        return ""
+
+    stripped = "".join(ca_cert.split())  # strip newlines/whitespace
+    if "BEGINCERTIFICATE" in stripped or ca_cert.lstrip().startswith("-----BEGIN"):
+        # Raw PEM → encode once.
+        return base64.b64encode(ca_cert.encode("utf-8")).decode("ascii")
+
+    # Defensive: confirm the value is valid base64. If it isn't, fall back to
+    # encoding the raw bytes once. Either branch produces exactly one layer
+    # of base64 in the kubeconfig.
+    try:
+        base64.b64decode(stripped, validate=True)
+        return stripped
+    except (binascii.Error, ValueError):
+        return base64.b64encode(ca_cert.encode("utf-8")).decode("ascii")
 
 
 __all__ = ["RealGCPProvider"]

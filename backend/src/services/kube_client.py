@@ -7,11 +7,26 @@ this module — see ``deployment_orchestrator``.
 from __future__ import annotations
 
 import asyncio
+import logging
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
+
+logger = logging.getLogger("llmops.kube_client")
+
+StatusCallback = Callable[[str], None]
+
+
+class GpuQuotaExhaustedError(RuntimeError):
+    """Raised when pods can never be scheduled because there's no GPU quota.
+
+    Detected via Pod events with reason ``FailedScheduling`` referencing
+    insufficient ``nvidia.com/gpu`` resources. We surface this as a distinct
+    type so the orchestrator can format a helpful message that points the
+    user at the GCP quota request flow.
+    """
 
 
 async def apply_objects(kubeconfig_yaml: str, manifest_yaml: str) -> None:
@@ -103,10 +118,34 @@ async def wait_deployment_available(
     deployment_name: str,
     namespace: str = "default",
     timeout_seconds: int = 1800,
+    status_callback: StatusCallback | None = None,
+    quota_failure_grace_seconds: int = 300,
 ) -> None:
+    """Block until the named Deployment has at least one Available replica.
+
+    Polls the Deployment + its Pods + recent events on a 5-second cadence.
+    Whenever the high-level pod state changes (Pending → Pulling → Running →
+    Ready) the optional ``status_callback`` is invoked with a short
+    human-readable message — the orchestrator wires this into
+    ``deployment.status_message`` so the UI shows live progress instead of a
+    silent 30-minute blank.
+
+    Fast-fails (raising :class:`GpuQuotaExhaustedError`) if the pod stays
+    ``Pending`` with ``FailedScheduling`` events caused by insufficient
+    ``nvidia.com/gpu`` for longer than ``quota_failure_grace_seconds``. There
+    is no recovery from this without a quota increase, so blocking the full
+    30-minute timeout would just waste the user's time.
+
+    On the final timeout, the raised :class:`TimeoutError` includes the
+    most recent pod / container / event diagnostics so the orchestrator can
+    surface a useful failure message in the UI rather than the bare phrase
+    "did not become Available".
+    """
     loop = asyncio.get_event_loop()
 
     def _wait() -> None:
+        import time
+
         from kubernetes import client, config
 
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
@@ -116,22 +155,233 @@ async def wait_deployment_available(
         try:
             config.load_kube_config(config_file=kubeconfig_path)
             apps_v1 = client.AppsV1Api()
-            deadline = loop.time() + timeout_seconds
-            while loop.time() < deadline:
-                status = apps_v1.read_namespaced_deployment_status(
-                    name=deployment_name, namespace=namespace
-                ).status
-                if status and status.available_replicas and status.available_replicas >= 1:
+            core_v1 = client.CoreV1Api()
+
+            deadline = time.monotonic() + timeout_seconds
+            quota_first_seen_at: float | None = None
+            last_status_message: str | None = None
+            last_diagnostics: dict[str, Any] = {}
+
+            while time.monotonic() < deadline:
+                try:
+                    dep_status = apps_v1.read_namespaced_deployment_status(
+                        name=deployment_name, namespace=namespace
+                    ).status
+                except Exception as exc:  # noqa: BLE001 — diagnostic poll is best-effort
+                    logger.debug("Deployment poll failed: %s", exc)
+                    dep_status = None
+
+                if dep_status and dep_status.available_replicas and dep_status.available_replicas >= 1:
+                    if status_callback is not None:
+                        try:
+                            status_callback("vLLM pod is Ready.")
+                        except Exception:  # noqa: BLE001
+                            logger.exception("status_callback raised; ignoring.")
                     return
-                import time
+
+                diagnostics = _collect_pod_diagnostics(
+                    core_v1=core_v1,
+                    namespace=namespace,
+                    deployment_name=deployment_name,
+                )
+                last_diagnostics = diagnostics
+
+                if diagnostics.get("gpu_quota_failed_scheduling"):
+                    if quota_first_seen_at is None:
+                        quota_first_seen_at = time.monotonic()
+                    elif time.monotonic() - quota_first_seen_at >= quota_failure_grace_seconds:
+                        raise GpuQuotaExhaustedError(
+                            _format_quota_error(diagnostics)
+                        )
+                else:
+                    quota_first_seen_at = None
+
+                msg = _summarize_pod_state(diagnostics)
+                if msg and msg != last_status_message:
+                    last_status_message = msg
+                    logger.info("Deployment %s: %s", deployment_name, msg)
+                    if status_callback is not None:
+                        try:
+                            status_callback(msg)
+                        except Exception:  # noqa: BLE001
+                            logger.exception("status_callback raised; ignoring.")
+
                 time.sleep(5)
+
             raise TimeoutError(
-                f"Deployment {deployment_name} did not become Available within {timeout_seconds}s."
+                f"Deployment {deployment_name} did not become Available within "
+                f"{timeout_seconds}s. {_format_timeout_diagnostics(last_diagnostics)}"
             )
         finally:
             Path(kubeconfig_path).unlink(missing_ok=True)
 
     await loop.run_in_executor(None, _wait)
+
+
+# --------------------------------------------------------------------------- #
+# Diagnostics helpers                                                         #
+# --------------------------------------------------------------------------- #
+
+def _collect_pod_diagnostics(
+    *,
+    core_v1,
+    namespace: str,
+    deployment_name: str,
+) -> dict[str, Any]:
+    """Return a snapshot of the pods/events backing ``deployment_name``.
+
+    We rely on the convention that pods are labeled
+    ``app.kubernetes.io/name=<safe>`` where the deployment is
+    ``<safe>-vllm`` (see ``vllm_manifest.generate``).
+    """
+    pod_label_value = deployment_name.removesuffix("-vllm") if deployment_name.endswith("-vllm") else deployment_name
+    selector = f"app.kubernetes.io/name={pod_label_value}"
+
+    pods_summary: list[dict[str, Any]] = []
+    gpu_quota_failed_scheduling = False
+    events_summary: list[str] = []
+
+    try:
+        pods = core_v1.list_namespaced_pod(namespace=namespace, label_selector=selector).items
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Pod list failed: %s", exc)
+        pods = []
+
+    for pod in pods:
+        phase = getattr(pod.status, "phase", None) or "Unknown"
+        container_summary: list[str] = []
+        for cs in (pod.status.container_statuses or []):
+            state = cs.state
+            if state and state.waiting:
+                container_summary.append(
+                    f"waiting/{state.waiting.reason or '?'}: {state.waiting.message or ''}".strip(": ")
+                )
+            elif state and state.running:
+                container_summary.append("running")
+            elif state and state.terminated:
+                container_summary.append(
+                    f"terminated/{state.terminated.reason or '?'}: {state.terminated.message or ''}".strip(": ")
+                )
+        if not container_summary:
+            container_summary.append("no container status yet")
+
+        pod_entry = {
+            "name": pod.metadata.name,
+            "phase": phase,
+            "containers": container_summary,
+            "restart_count": sum((cs.restart_count or 0) for cs in (pod.status.container_statuses or [])),
+        }
+
+        try:
+            field_selector = f"involvedObject.name={pod.metadata.name},involvedObject.kind=Pod"
+            evts = core_v1.list_namespaced_event(
+                namespace=namespace, field_selector=field_selector
+            ).items
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Event list failed for pod %s: %s", pod.metadata.name, exc)
+            evts = []
+
+        # Sort by last_timestamp descending; keep the 5 most recent.
+        evts.sort(
+            key=lambda e: (e.last_timestamp or e.event_time or e.metadata.creation_timestamp),
+            reverse=True,
+        )
+        for evt in evts[:5]:
+            line = f"{evt.type or '?'} {evt.reason or '?'}: {evt.message or ''}"
+            events_summary.append(f"{pod.metadata.name}: {line}")
+            if (
+                evt.reason == "FailedScheduling"
+                and evt.message
+                and "nvidia.com/gpu" in evt.message
+                and ("Insufficient" in evt.message or "quota" in evt.message.lower())
+            ):
+                gpu_quota_failed_scheduling = True
+
+        pod_entry["recent_events"] = [
+            f"{evt.type or '?'} {evt.reason or '?'}: {evt.message or ''}" for evt in evts[:5]
+        ]
+        pods_summary.append(pod_entry)
+
+    return {
+        "pods": pods_summary,
+        "events": events_summary,
+        "gpu_quota_failed_scheduling": gpu_quota_failed_scheduling,
+    }
+
+
+def _summarize_pod_state(diagnostics: dict[str, Any]) -> str:
+    pods = diagnostics.get("pods") or []
+    if not pods:
+        return "Waiting for vLLM pod to be scheduled…"
+
+    pod = pods[0]
+    phase = pod.get("phase", "Unknown")
+    containers = pod.get("containers") or []
+
+    if phase == "Pending":
+        # Look at recent events to be more specific.
+        for evt in pod.get("recent_events", []):
+            if "FailedScheduling" in evt and "nvidia.com/gpu" in evt:
+                return "Waiting for an L4 GPU node (FailedScheduling: insufficient nvidia.com/gpu)…"
+            if "TriggeredScaleUp" in evt or "Provisioning" in evt:
+                return "GKE Autopilot is provisioning a GPU node…"
+            if "FailedScheduling" in evt:
+                return f"Pod stuck Pending: {evt}"
+        return "Pod is Pending — waiting for a node…"
+
+    if phase == "Running":
+        for state in containers:
+            if state.startswith("waiting/ImagePullBackOff") or state.startswith("waiting/ErrImagePull"):
+                return f"Image pull failed: {state}"
+        if any("running" == c for c in containers):
+            return "vLLM container is up — loading model into GPU memory…"
+        return "Pod Running, container starting…"
+
+    if phase == "Failed":
+        return f"Pod Failed: {'; '.join(containers)}"
+
+    return f"Pod phase={phase}: {'; '.join(containers)}"
+
+
+def _format_quota_error(diagnostics: dict[str, Any]) -> str:
+    """Build a clear, actionable message for the L4-quota=0 case."""
+    pods = diagnostics.get("pods") or []
+    pod_line = ""
+    if pods:
+        pod = pods[0]
+        evt_line = next(
+            (e for e in pod.get("recent_events", []) if "FailedScheduling" in e and "nvidia.com/gpu" in e),
+            "",
+        )
+        pod_line = f" Pod {pod.get('name')} reports: {evt_line}"
+    return (
+        "Pod could not be scheduled — your GCP project has no NVIDIA L4 GPU "
+        "quota in this region (default for new projects is 0)."
+        + pod_line
+        + " Request a quota increase at "
+        "https://console.cloud.google.com/iam-admin/quotas — filter by "
+        "metric 'NVIDIA L4 GPUs' and the cluster's region (e.g. us-central1) "
+        "and request at least 1. After the increase is granted, delete this "
+        "deployment and create a new one."
+    )
+
+
+def _format_timeout_diagnostics(diagnostics: dict[str, Any]) -> str:
+    if not diagnostics:
+        return "No pod diagnostics were captured before the timeout."
+
+    parts: list[str] = []
+    for pod in (diagnostics.get("pods") or [])[:2]:
+        parts.append(
+            f"Pod {pod.get('name')} phase={pod.get('phase')} "
+            f"containers={pod.get('containers')} "
+            f"restarts={pod.get('restart_count', 0)}"
+        )
+        if pod.get("recent_events"):
+            parts.append("  Recent events: " + " | ".join(pod["recent_events"]))
+    if not parts:
+        parts.append("No pods were ever observed for this deployment.")
+    return " | ".join(parts)
 
 
 async def get_service_lb_ip(
