@@ -31,7 +31,7 @@ def test_vllm_manifest_generates_deployment_service_secret():
     assert "Secret" in kinds
 
 
-def test_vllm_manifest_deployment_requests_one_l4_gpu():
+def test_vllm_manifest_deployment_is_cpu_only():
     from src.services.vllm_manifest import generate
 
     manifest_yaml = generate(
@@ -44,15 +44,22 @@ def test_vllm_manifest_deployment_requests_one_l4_gpu():
     container = deployment["spec"]["template"]["spec"]["containers"][0]
 
     resources = container["resources"]
-    assert resources["limits"]["nvidia.com/gpu"] == 1
-    # Must pin to NVIDIA L4 per plan.md (cheapest viable for small text-gen)
-    node_selector = deployment["spec"]["template"]["spec"].get("nodeSelector", {})
-    assert node_selector.get("cloud.google.com/gke-accelerator") == "nvidia-l4"
+    assert "nvidia.com/gpu" not in resources["limits"]
+    assert "nvidia.com/gpu" not in resources["requests"]
+    assert "nodeSelector" not in deployment["spec"]["template"]["spec"]
 
-    assert "vllm/vllm-openai" in container["image"]
-    # Model id is passed as a CLI arg, not baked into the image
+    assert "text-generation-inference:3.3.6-intel-cpu" in container["image"]
+    # Model id is passed as a CLI arg, not baked into the image.
     combined_args = " ".join(container.get("args", []))
+    assert "--model-id" in combined_args
+    assert container["args"].count("--disable-custom-kernels") == 1
     assert "Qwen/Qwen3-1.7B" in combined_args
+    assert resources["requests"]["ephemeral-storage"] == "6Gi"
+    assert resources["limits"]["ephemeral-storage"] == "8Gi"
+    assert "startupProbe" in container
+    assert container["startupProbe"]["failureThreshold"] == 90
+    assert container["readinessProbe"]["failureThreshold"] == 20
+    assert container["livenessProbe"]["failureThreshold"] == 10
 
 
 def test_vllm_manifest_service_is_loadbalancer_port_80():

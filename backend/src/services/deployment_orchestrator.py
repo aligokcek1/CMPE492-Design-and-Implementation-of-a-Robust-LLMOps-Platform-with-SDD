@@ -165,7 +165,7 @@ class DeploymentOrchestrator:
                 ca_certificate=cluster_handle.ca_certificate,
                 kubeconfig_yaml=fresh_kubeconfig,
             )
-            set_status("deploying", "Deploying vLLM server…")
+            set_status("deploying", "Deploying CPU inference server…")
 
             endpoint_url = await _apply_manifests_and_get_endpoint(
                 provider=provider,
@@ -173,7 +173,7 @@ class DeploymentOrchestrator:
                 cluster_handle=cluster_handle,
             )
 
-            set_status("running", "vLLM server is ready.", endpoint_url=endpoint_url)
+            set_status("running", "Inference server is ready.", endpoint_url=endpoint_url)
             logger.info("Deployment %s reached RUNNING at %s", deployment_id, endpoint_url)
         except asyncio.CancelledError:
             logger.info("Deployment %s was cancelled by user-initiated deletion.", deployment_id)
@@ -331,7 +331,7 @@ async def _apply_manifests_and_get_endpoint(
     row: DeploymentRow,
     cluster_handle: ClusterHandle,
 ) -> str:
-    """Apply the vLLM manifests and resolve the LoadBalancer's public URL.
+    """Apply inference manifests and resolve the LoadBalancer's public URL.
 
     Fake path (provider is ``FakeGCPProvider``): synthesises a fake IP so
     tests never touch ``kube_client`` → no kubernetes API calls inside
@@ -380,22 +380,27 @@ async def _apply_manifests_and_get_endpoint(
     try:
         await kube_client.wait_deployment_available(
             cluster_handle.kubeconfig_yaml,
-            f"{safe}-vllm",
+            f"{safe}-inference",
             status_callback=_live_status_update,
         )
     except kube_client.GpuQuotaExhaustedError as exc:
         # Translate into a structured GCPQuotaError so the failure-message
         # formatter (and any future UI quota-banner logic) can recognise it.
         raise GCPQuotaError(str(exc)) from exc
+    except kube_client.ContainerCrashLoopError as exc:
+        # Surface as a regular GCPProviderError so the orchestrator records
+        # the (already-actionable) message in status_message and does not
+        # auto-rollback the cluster (cluster_created is True at this point).
+        raise GCPProviderError(str(exc)) from exc
 
     ip = await kube_client.get_service_lb_ip(cluster_handle.kubeconfig_yaml, f"{safe}-svc")
     return f"http://{ip}:80"
 
 
 def _hf_token_for_user(user_id: str) -> str:
-    """Fetch the platform session HF token for the user so vLLM can pull gated models.
+    """Fetch the platform session HF token for the user so the runtime can pull models.
 
-    For public models this token is technically optional, but vLLM will still use
+    For public models this token is technically optional, but the runtime will still use
     it if set, and HF rate-limits anonymous downloads aggressively.
     """
     from .session_store import session_store

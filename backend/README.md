@@ -21,7 +21,7 @@ pip install -r requirements.txt
 | `LLMOPS_USE_FAKE_GCP` | no | Set to `1` to force the in-memory `FakeGCPProvider` even outside pytest (useful for local UI demos without a real GCP account). Never touches real cloud APIs. |
 | `LLMOPS_DATABASE_URL` | no | Override the default SQLite path (`backend/data/llmops.db`). Tests use this to point at a per-test temp file. |
 | `LLMOPS_DISABLE_STATUS_REFRESH` | no | Set to `1` to skip the background 30s status-refresh loop. Useful in test environments or when you only care about request-path behaviour. |
-| `LLMOPS_K8S_DRYRUN_KUBECONFIG` | no | Path to a scratch kubeconfig used by the opt-in `tests/dryrun/` suite to validate generated vLLM manifests via server-side `dry_run=["All"]`. When unset, the suite is skipped. |
+| `LLMOPS_K8S_DRYRUN_KUBECONFIG` | no | Path to a scratch kubeconfig used by the opt-in `tests/dryrun/` suite to validate generated CPU inference manifests via server-side `dry_run=["All"]`. When unset, the suite is skipped. |
 
 ## Routes added by feature 007
 
@@ -35,7 +35,7 @@ pip install -r requirements.txt
 | `GET`    | `/api/deployments/{id}`                   | Full detail incl. GCP project + console URL. |
 | `DELETE` | `/api/deployments/{id}`                   | Tear down the dedicated GCP project for the deployment. |
 | `POST`   | `/api/deployments/{id}/dismiss`           | Hard-delete a `lost` record (project gone out-of-band). |
-| `POST`   | `/api/deployments/{id}/inference`         | OpenAI chat-completions proxy with a hard 120s read timeout (SC-008). |
+| `POST`   | `/api/deployments/{id}/inference`         | OpenAI-style chat proxy (backed by CPU TGI `/generate`) with a hard 120s read timeout (SC-008). |
 
 The legacy `/api/deployment/mock` endpoint is preserved for **personal-repo** deployments per FR-010.
 
@@ -44,6 +44,10 @@ The legacy `/api/deployment/mock` endpoint is preserved for **personal-repo** de
 ```bash
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
+
+Save it once, then reuse the same value for every backend restart.
+If this key changes, previously saved GCP credentials in `llmops.db` become
+undecryptable.
 
 Export it before running the server:
 
@@ -55,6 +59,15 @@ export LLMOPS_ENCRYPTION_KEY=<key-from-above>
 
 ```bash
 uvicorn src.main:app --reload
+```
+
+## One-liner (first run only)
+
+Use this only the very first time, then persist the generated key somewhere
+safe (shell profile, `.env`, secret manager) and reuse it.
+
+```bash
+export LLMOPS_ENCRYPTION_KEY="$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")" && uvicorn src.main:app --reload
 ```
 
 The SQLite database is created on first startup at `backend/data/llmops.db` and

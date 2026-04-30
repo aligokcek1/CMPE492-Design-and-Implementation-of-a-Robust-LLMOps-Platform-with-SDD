@@ -1,13 +1,14 @@
-"""Generate the three Kubernetes manifests needed to serve a HF model via vLLM.
+"""Generate Kubernetes manifests for CPU-only text generation inference.
 
 Returns a single multi-document YAML string containing:
 
 1. ``Secret`` holding the HF token (mounted as env var ``HF_TOKEN``).
-2. ``Deployment`` running ``vllm/vllm-openai`` on 1x NVIDIA L4 GPU.
+2. ``Deployment`` running Hugging Face Text Generation Inference (TGI) on CPU.
 3. ``Service`` of type ``LoadBalancer`` exposing port 80 → container :8000.
 
-The structure follows the Qwen3 + vLLM tutorial referenced in
-``specs/007-gke-inference-pipeline/research.md`` (GKE Autopilot + L4).
+The service remains exposed via a public LoadBalancer endpoint and the backend
+inference proxy adapts the TGI response into the existing OpenAI-style shape
+expected by the frontend.
 """
 from __future__ import annotations
 
@@ -16,7 +17,10 @@ import re
 
 import yaml
 
-_IMAGE = "vllm/vllm-openai:latest"
+# Pin to a known-good CPU tag. ``latest`` drift previously pulled an image
+# whose bundled dependencies (compressed_tensors/transformers) were incompatible
+# and caused ShardCannotStart at import-time.
+_IMAGE = "ghcr.io/huggingface/text-generation-inference:3.3.6-intel-cpu"
 _CONTAINER_PORT = 8000
 _SERVICE_PORT = 80
 
@@ -26,7 +30,7 @@ def _safe_name(hf_model_id: str) -> str:
     lower = hf_model_id.lower()
     cleaned = re.sub(r"[^a-z0-9-]+", "-", lower).strip("-")
     cleaned = re.sub(r"-+", "-", cleaned)
-    return cleaned[:50] or "vllm"
+    return cleaned[:50] or "inference"
 
 
 def generate(
@@ -39,12 +43,12 @@ def generate(
     """Return a multi-document YAML string with Secret + Deployment + Service."""
     name = _safe_name(hf_model_id)
     secret_name = f"{name}-hf-token"
-    deployment_name = f"{name}-vllm"
+    deployment_name = f"{name}-inference"
     service_name = f"{name}-svc"
 
     common_labels = {
         "app.kubernetes.io/name": name,
-        "app.kubernetes.io/component": "vllm",
+        "app.kubernetes.io/component": "tgi-cpu",
         "app.kubernetes.io/managed-by": "llmops-platform",
         "llmops.cluster": cluster_name,
     }
@@ -77,27 +81,23 @@ def generate(
             "template": {
                 "metadata": {"labels": common_labels},
                 "spec": {
-                    "nodeSelector": {
-                        "cloud.google.com/gke-accelerator": "nvidia-l4",
-                    },
                     "containers": [
                         {
-                            "name": "vllm",
+                            "name": "tgi",
                             "image": _IMAGE,
                             "imagePullPolicy": "IfNotPresent",
                             "args": [
-                                "--model",
+                                "--model-id",
                                 hf_model_id,
                                 "--port",
                                 str(_CONTAINER_PORT),
-                                "--host",
+                                "--hostname",
                                 "0.0.0.0",
-                                "--dtype",
-                                "auto",
-                                "--max-model-len",
+                                "--max-input-length",
                                 "4096",
-                                "--gpu-memory-utilization",
-                                "0.90",
+                                "--max-total-tokens",
+                                "6144",
+                                "--disable-custom-kernels",
                             ],
                             "env": [
                                 {
@@ -122,27 +122,36 @@ def generate(
                             "ports": [{"containerPort": _CONTAINER_PORT}],
                             "resources": {
                                 "limits": {
-                                    "nvidia.com/gpu": 1,
-                                    "memory": "24Gi",
-                                    "cpu": "4",
-                                    "ephemeral-storage": "20Gi",
+                                    "memory": "4Gi",
+                                    "cpu": "1",
+                                    "ephemeral-storage": "8Gi",
                                 },
                                 "requests": {
-                                    "nvidia.com/gpu": 1,
-                                    "memory": "24Gi",
-                                    "cpu": "4",
-                                    "ephemeral-storage": "20Gi",
+                                    "memory": "2Gi",
+                                    "cpu": "500m",
+                                    "ephemeral-storage": "6Gi",
                                 },
+                            },
+                            "startupProbe": {
+                                "httpGet": {"path": "/health", "port": _CONTAINER_PORT},
+                                "initialDelaySeconds": 30,
+                                "periodSeconds": 10,
+                                "timeoutSeconds": 5,
+                                "failureThreshold": 90,
                             },
                             "readinessProbe": {
                                 "httpGet": {"path": "/health", "port": _CONTAINER_PORT},
-                                "initialDelaySeconds": 60,
+                                "initialDelaySeconds": 30,
                                 "periodSeconds": 10,
+                                "timeoutSeconds": 5,
+                                "failureThreshold": 20,
                             },
                             "livenessProbe": {
                                 "httpGet": {"path": "/health", "port": _CONTAINER_PORT},
-                                "initialDelaySeconds": 180,
+                                "initialDelaySeconds": 30,
                                 "periodSeconds": 30,
+                                "timeoutSeconds": 5,
+                                "failureThreshold": 10,
                             },
                         }
                     ],

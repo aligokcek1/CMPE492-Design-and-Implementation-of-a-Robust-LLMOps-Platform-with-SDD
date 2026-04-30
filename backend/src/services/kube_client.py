@@ -29,6 +29,18 @@ class GpuQuotaExhaustedError(RuntimeError):
     """
 
 
+class ContainerCrashLoopError(RuntimeError):
+    """Raised when a pod's container keeps crashing and clearly will not recover.
+
+    We attach the most recent container logs (last few hundred lines) so the
+    deployment status surfaced in the UI tells the user *why* the workload
+    died, not just that it did. Detected once ``restartCount >= 3`` AND the
+    container is back in ``waiting/CrashLoopBackOff`` — at that point we know
+    the failure is reproducible and there's no reason to burn the rest of the
+    30-minute timeout.
+    """
+
+
 async def apply_objects(kubeconfig_yaml: str, manifest_yaml: str) -> None:
     """Apply Secret + Deployment + Service using the official kubernetes client.
 
@@ -174,7 +186,7 @@ async def wait_deployment_available(
                 if dep_status and dep_status.available_replicas and dep_status.available_replicas >= 1:
                     if status_callback is not None:
                         try:
-                            status_callback("vLLM pod is Ready.")
+                            status_callback("Inference pod is Ready.")
                         except Exception:  # noqa: BLE001
                             logger.exception("status_callback raised; ignoring.")
                     return
@@ -195,6 +207,11 @@ async def wait_deployment_available(
                         )
                 else:
                     quota_first_seen_at = None
+
+                if _is_persistent_crash_loop(diagnostics):
+                    raise ContainerCrashLoopError(
+                        _format_crashloop_error(core_v1, namespace, diagnostics)
+                    )
 
                 msg = _summarize_pod_state(diagnostics)
                 if msg and msg != last_status_message:
@@ -232,9 +249,14 @@ def _collect_pod_diagnostics(
 
     We rely on the convention that pods are labeled
     ``app.kubernetes.io/name=<safe>`` where the deployment is
-    ``<safe>-vllm`` (see ``vllm_manifest.generate``).
+    ``<safe>-inference`` (or legacy ``<safe>-vllm``).
     """
-    pod_label_value = deployment_name.removesuffix("-vllm") if deployment_name.endswith("-vllm") else deployment_name
+    if deployment_name.endswith("-inference"):
+        pod_label_value = deployment_name.removesuffix("-inference")
+    elif deployment_name.endswith("-vllm"):
+        pod_label_value = deployment_name.removesuffix("-vllm")
+    else:
+        pod_label_value = deployment_name
     selector = f"app.kubernetes.io/name={pod_label_value}"
 
     pods_summary: list[dict[str, Any]] = []
@@ -265,11 +287,23 @@ def _collect_pod_diagnostics(
         if not container_summary:
             container_summary.append("no container status yet")
 
+        crash_loop_container: str | None = None
+        max_restart_count = 0
+        for cs in (pod.status.container_statuses or []):
+            restarts = cs.restart_count or 0
+            if restarts > max_restart_count:
+                max_restart_count = restarts
+            state = cs.state
+            if state and state.waiting and state.waiting.reason == "CrashLoopBackOff":
+                crash_loop_container = cs.name
+
         pod_entry = {
             "name": pod.metadata.name,
             "phase": phase,
             "containers": container_summary,
             "restart_count": sum((cs.restart_count or 0) for cs in (pod.status.container_statuses or [])),
+            "max_restart_count": max_restart_count,
+            "crash_loop_container": crash_loop_container,
         }
 
         try:
@@ -312,7 +346,7 @@ def _collect_pod_diagnostics(
 def _summarize_pod_state(diagnostics: dict[str, Any]) -> str:
     pods = diagnostics.get("pods") or []
     if not pods:
-        return "Waiting for vLLM pod to be scheduled…"
+        return "Waiting for inference pod to be scheduled…"
 
     pod = pods[0]
     phase = pod.get("phase", "Unknown")
@@ -322,9 +356,9 @@ def _summarize_pod_state(diagnostics: dict[str, Any]) -> str:
         # Look at recent events to be more specific.
         for evt in pod.get("recent_events", []):
             if "FailedScheduling" in evt and "nvidia.com/gpu" in evt:
-                return "Waiting for an L4 GPU node (FailedScheduling: insufficient nvidia.com/gpu)…"
+                return "Waiting for a compatible node (FailedScheduling: insufficient nvidia.com/gpu)…"
             if "TriggeredScaleUp" in evt or "Provisioning" in evt:
-                return "GKE Autopilot is provisioning a GPU node…"
+                return "GKE Autopilot is provisioning a node…"
             if "FailedScheduling" in evt:
                 return f"Pod stuck Pending: {evt}"
         return "Pod is Pending — waiting for a node…"
@@ -334,7 +368,7 @@ def _summarize_pod_state(diagnostics: dict[str, Any]) -> str:
             if state.startswith("waiting/ImagePullBackOff") or state.startswith("waiting/ErrImagePull"):
                 return f"Image pull failed: {state}"
         if any("running" == c for c in containers):
-            return "vLLM container is up — loading model into GPU memory…"
+            return "Inference container is up — loading model…"
         return "Pod Running, container starting…"
 
     if phase == "Failed":
@@ -344,7 +378,7 @@ def _summarize_pod_state(diagnostics: dict[str, Any]) -> str:
 
 
 def _format_quota_error(diagnostics: dict[str, Any]) -> str:
-    """Build a clear, actionable message for the L4-quota=0 case."""
+    """Build a clear, actionable message for a GPU-quota scheduling failure."""
     pods = diagnostics.get("pods") or []
     pod_line = ""
     if pods:
@@ -355,12 +389,13 @@ def _format_quota_error(diagnostics: dict[str, Any]) -> str:
         )
         pod_line = f" Pod {pod.get('name')} reports: {evt_line}"
     return (
-        "Pod could not be scheduled — your GCP project has no NVIDIA L4 GPU "
-        "quota in this region (default for new projects is 0)."
+        "Pod could not be scheduled — your GCP project has no compatible GPU "
+        "quota in this region."
         + pod_line
         + " Request a quota increase at "
         "https://console.cloud.google.com/iam-admin/quotas — filter by "
-        "metric 'NVIDIA L4 GPUs' and the cluster's region (e.g. us-central1) "
+        "the relevant GPU metric in the cluster region (for example "
+        "'NVIDIA L4 GPUs' in us-central1) "
         "and request at least 1. After the increase is granted, delete this "
         "deployment and create a new one."
     )
@@ -382,6 +417,98 @@ def _format_timeout_diagnostics(diagnostics: dict[str, Any]) -> str:
     if not parts:
         parts.append("No pods were ever observed for this deployment.")
     return " | ".join(parts)
+
+
+_CRASH_LOOP_RESTART_THRESHOLD = 3
+
+
+def _is_persistent_crash_loop(diagnostics: dict[str, Any]) -> bool:
+    """Return True when at least one container has crashed several times.
+
+    The threshold is intentionally low (3) — Kubernetes already backs off
+    exponentially between restarts, so by the time we see 3 restarts the
+    failure has been reproduced ~3 times in a row. Continuing to wait the
+    full 30-minute timeout would just delay surfacing the real error to
+    the user.
+    """
+    for pod in diagnostics.get("pods") or []:
+        if (
+            pod.get("crash_loop_container")
+            and (pod.get("max_restart_count") or 0) >= _CRASH_LOOP_RESTART_THRESHOLD
+        ):
+            return True
+    return False
+
+
+def _format_crashloop_error(core_v1, namespace: str, diagnostics: dict[str, Any]) -> str:
+    """Compose a human-readable error message that includes container logs."""
+    pods = diagnostics.get("pods") or []
+    if not pods:
+        return "Container is in CrashLoopBackOff but no pod metadata is available."
+
+    pod = pods[0]
+    pod_name = pod.get("name") or "<unknown>"
+    container = pod.get("crash_loop_container") or "<unknown>"
+    restarts = pod.get("max_restart_count") or 0
+
+    log_excerpt = _fetch_container_logs(
+        core_v1=core_v1,
+        namespace=namespace,
+        pod_name=pod_name,
+        container=container,
+    )
+
+    parts = [
+        f"Container '{container}' in pod '{pod_name}' is in CrashLoopBackOff "
+        f"after {restarts} restart(s). The image was pulled successfully but "
+        "the process keeps exiting. Most common causes: model architecture "
+        "is not supported by the runtime, missing/incorrect CLI args, or "
+        "model requires more memory than the pod has."
+    ]
+    if log_excerpt:
+        parts.append(f"Last container log lines:\n{log_excerpt}")
+    else:
+        parts.append("(Could not retrieve container logs.)")
+    return "\n".join(parts)
+
+
+def _fetch_container_logs(
+    *,
+    core_v1,
+    namespace: str,
+    pod_name: str,
+    container: str,
+    tail_lines: int = 80,
+) -> str:
+    """Best-effort fetch of the most recent container logs.
+
+    Tries the previous (crashed) container first via ``previous=True`` since
+    the *current* container in CrashLoopBackOff hasn't started yet. Falls
+    back to the live container if that fails.
+    """
+    from kubernetes.client.exceptions import ApiException
+
+    for previous_flag in (True, False):
+        try:
+            text = core_v1.read_namespaced_pod_log(
+                name=pod_name,
+                namespace=namespace,
+                container=container,
+                tail_lines=tail_lines,
+                previous=previous_flag,
+            )
+        except ApiException as exc:
+            logger.debug(
+                "read_namespaced_pod_log(previous=%s) failed for %s/%s: %s",
+                previous_flag, pod_name, container, exc,
+            )
+            continue
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Unexpected error fetching logs: %s", exc)
+            continue
+        if text:
+            return text.strip()
+    return ""
 
 
 async def get_service_lb_ip(

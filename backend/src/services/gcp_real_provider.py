@@ -564,11 +564,19 @@ def _saved_credentials_for_user(user_id: str):
 
     from google.oauth2 import service_account
 
+    from .crypto import CryptoError
     from .credentials_store import credentials_store
 
     loop = asyncio.new_event_loop()
     try:
-        tup = loop.run_until_complete(credentials_store.get_decrypted(user_id=user_id))
+        try:
+            tup = loop.run_until_complete(credentials_store.get_decrypted(user_id=user_id))
+        except CryptoError as exc:
+            raise GCPAuthError(
+                "Stored GCP credentials cannot be decrypted because "
+                "LLMOPS_ENCRYPTION_KEY changed. Re-save credentials in the "
+                "dashboard (or restart backend with the original key) and retry."
+            ) from exc
     finally:
         loop.close()
     if tup is None:
@@ -608,6 +616,7 @@ def _saved_sa_json_for_project(project_id: str) -> str:
 
     from ..db import get_session_factory
     from ..db.models import DeploymentRow
+    from .crypto import CryptoError
     from .credentials_store import credentials_store
 
     session_factory = get_session_factory()
@@ -620,7 +629,14 @@ def _saved_sa_json_for_project(project_id: str) -> str:
 
     loop = asyncio.new_event_loop()
     try:
-        tup = loop.run_until_complete(credentials_store.get_decrypted(user_id=row.user_id))
+        try:
+            tup = loop.run_until_complete(credentials_store.get_decrypted(user_id=row.user_id))
+        except CryptoError as exc:
+            raise GCPAuthError(
+                "Stored GCP credentials cannot be decrypted because "
+                "LLMOPS_ENCRYPTION_KEY changed. Re-save credentials in the "
+                "dashboard (or restart backend with the original key) and retry."
+            ) from exc
     finally:
         loop.close()
     if tup is None:
