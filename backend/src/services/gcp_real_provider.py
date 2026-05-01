@@ -166,9 +166,13 @@ class RealGCPProvider(GCPProvider):
 
     async def enable_services(self, project_id: str) -> None:
         import asyncio
+        import logging
+        import time
 
         from google.api_core import exceptions as gcp_exceptions
         from google.cloud import service_usage_v1
+
+        log = logging.getLogger("llmops.gcp.real_provider")
 
         def _enable() -> None:
             creds = _saved_credentials_for_user_for_project(project_id)
@@ -217,6 +221,63 @@ class RealGCPProvider(GCPProvider):
                 raise GCPProviderError(f"Enable-services precondition failed: {msg}") from exc
             except gcp_exceptions.GoogleAPICallError as exc:
                 raise GCPTransientError(f"Transient error enabling services: {exc.message}") from exc
+
+            # ----------------------------------------------------------------
+            # Propagation barrier.
+            #
+            # batch_enable_services' LRO returning DONE only means Service
+            # Usage has *recorded* the activation. The downstream APIs
+            # (especially compute.googleapis.com) take an additional
+            # 30-120s to propagate to all regional control planes on
+            # freshly-created projects. If we return now, the next step
+            # (create_gke_cluster) will hit a 403 PermissionDenied with
+            # "Compute Engine API has not been used in project X before
+            # or it is disabled".
+            #
+            # Poll get_service() until each required API reports
+            # State.ENABLED, then sleep an extra 15s for regional fan-out.
+            # ----------------------------------------------------------------
+            deadline = time.monotonic() + 240  # 4 min hard cap
+            pending: set[str] = set(service_names)
+            while pending and time.monotonic() < deadline:
+                still_pending: set[str] = set()
+                for svc in pending:
+                    try:
+                        svc_info = client.get_service(
+                            request=service_usage_v1.GetServiceRequest(
+                                name=f"projects/{project_id}/services/{svc}"
+                            )
+                        )
+                    except gcp_exceptions.GoogleAPICallError as probe_exc:
+                        log.debug(
+                            "get_service(%s) on %s failed during propagation poll: %s",
+                            svc, project_id, probe_exc,
+                        )
+                        still_pending.add(svc)
+                        continue
+                    if svc_info.state != service_usage_v1.State.ENABLED:
+                        still_pending.add(svc)
+                pending = still_pending
+                if pending:
+                    log.info(
+                        "Waiting for services %s to propagate on project %s…",
+                        sorted(pending), project_id,
+                    )
+                    time.sleep(10)
+
+            if pending:
+                raise GCPTransientError(
+                    f"APIs {sorted(pending)} were not ENABLED on project "
+                    f"{project_id} within 240s after batch_enable_services "
+                    "completed. This is usually transient GCP propagation "
+                    "lag — retry the deploy in a minute."
+                )
+
+            # Even when get_service() reports ENABLED, Compute Engine's
+            # regional endpoints can lag a few more seconds. A short fixed
+            # sleep here is far cheaper than a failed cluster create + a
+            # ~25-minute Autopilot rollback.
+            time.sleep(15)
 
         await asyncio.get_event_loop().run_in_executor(None, _enable)
 
@@ -271,7 +332,7 @@ class RealGCPProvider(GCPProvider):
                         f"Billing account '{billing_account_id}' cannot accept another "
                         "linked project — its per-account quota for concurrent billed "
                         "projects has been reached. This is a common ceiling on "
-                        "free-trial ($300-credit) accounts, which are typically capped "
+                        "free-trial (\$300-credit) accounts, which are typically capped "
                         "at 5 simultaneously-billed projects.\n\n"
                         "Fix by deleting dangling projects this billing account is still "
                         "linked to:\n\n"
@@ -345,7 +406,20 @@ class RealGCPProvider(GCPProvider):
                     ),
                 )
             except gcp_exceptions.PermissionDenied as exc:
-                raise GCPAuthError(f"Cluster creation refused: {exc.message}") from exc
+                msg = exc.message or ""
+                if (
+                    "has not been used in project" in msg
+                    or "SERVICE_DISABLED" in msg
+                    or "it is disabled" in msg
+                ):
+                    raise GCPTransientError(
+                        f"Cluster creation hit a not-yet-propagated API on "
+                        f"project '{project_id}': {msg} This is a known GCP "
+                        "race on brand-new projects (compute.googleapis.com "
+                        "can take up to ~2 minutes to propagate after "
+                        "enable_services completes). Retry the deploy."
+                    ) from exc
+                raise GCPAuthError(f"Cluster creation refused: {msg}") from exc
             except gcp_exceptions.GoogleAPICallError as exc:
                 raise GCPTransientError(f"Transient error creating cluster: {exc.message}") from exc
 

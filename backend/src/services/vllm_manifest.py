@@ -12,7 +12,6 @@ expected by the frontend.
 """
 from __future__ import annotations
 
-import base64
 import re
 
 import yaml
@@ -62,8 +61,8 @@ def generate(
             "namespace": namespace,
             "labels": common_labels,
         },
-        "data": {
-            "HF_TOKEN": base64.b64encode(hf_token.encode("utf-8")).decode("ascii"),
+        "stringData": {
+            "HF_TOKEN": hf_token,
         },
     }
 
@@ -93,10 +92,16 @@ def generate(
                                 str(_CONTAINER_PORT),
                                 "--hostname",
                                 "0.0.0.0",
+                                "--dtype",
+                                "bfloat16",
                                 "--max-input-length",
                                 "4096",
                                 "--max-total-tokens",
                                 "6144",
+                                "--max-concurrent-requests",
+                                "16",
+                                "--max-batch-prefill-tokens",
+                                "2048",
                                 "--disable-custom-kernels",
                             ],
                             "env": [
