@@ -1,12 +1,12 @@
 import re
-from fastapi import APIRouter, Depends, HTTPException
 from typing import Any
 
+from fastapi import APIRouter, Depends, HTTPException
 from huggingface_hub.utils import HfHubHTTPError, RepositoryNotFoundError
 
 from ..api.auth_helpers import require_session
 from ..models.upload import PublicModelInfoResponse
-from ..services.huggingface import list_user_models, fetch_public_model_info
+from ..services.huggingface import fetch_public_model_info, list_user_models
 
 router = APIRouter()
 

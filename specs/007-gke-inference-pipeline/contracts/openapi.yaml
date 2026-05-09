@@ -1,0 +1,284 @@
+openapi: 3.0.3
+info:
+  title: LLMOps Platform — Feature 007 (GKE Inference Pipeline)
+  version: "0.1.0"
+  description: |
+    New and modified HTTP endpoints introduced by feature 007. All endpoints
+    require an active platform session (see feature 006). Session auth is
+    carried via the platform session cookie/token and is not re-described
+    here.
+
+servers:
+  - url: http://localhost:8000
+
+components:
+  securitySchemes:
+    PlatformSession:
+      type: apiKey
+      in: cookie
+      name: llmops_session
+
+  schemas:
+    GCPCredentialsRequest:
+      type: object
+      required: [service_account_json, billing_account_id]
+      properties:
+        service_account_json:
+          type: string
+          description: Full JSON contents of the GCP service account key file.
+        billing_account_id:
+          type: string
+          pattern: "^billingAccounts/[A-Z0-9-]{20}$"
+
+    GCPCredentialsStatus:
+      type: object
+      required: [configured]
+      properties:
+        configured: { type: boolean }
+        service_account_email: { type: string, nullable: true }
+        gcp_project_id_of_sa: { type: string, nullable: true }
+        billing_account_id: { type: string, nullable: true }
+        validation_status:
+          type: string
+          enum: [valid, invalid]
+          nullable: true
+        validation_error_message: { type: string, nullable: true }
+        last_validated_at: { type: string, format: date-time, nullable: true }
+
+    DeployRequest:
+      type: object
+      required: [hf_model_id]
+      properties:
+        hf_model_id:
+          type: string
+          example: "Qwen/Qwen3-1.7B"
+        force:
+          type: boolean
+          default: false
+          description: Bypass the duplicate-model confirmation (FR-016).
+
+    Deployment:
+      type: object
+      required: [id, hf_model_id, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        hf_model_id: { type: string }
+        hf_model_display_name: { type: string }
+        status:
+          type: string
+          enum: [queued, deploying, running, failed, deleting, deleted, lost]
+        status_message: { type: string, nullable: true }
+        endpoint_url: { type: string, format: uri, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    DeploymentDetail:
+      allOf:
+        - $ref: "#/components/schemas/Deployment"
+        - type: object
+          properties:
+            gcp_project_id: { type: string }
+            gke_cluster_name: { type: string }
+            gke_region: { type: string }
+            gcp_console_url: { type: string, format: uri }
+
+    InferenceRequest:
+      type: object
+      description: OpenAI chat-completions payload; passed through unchanged.
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role: { type: string, enum: [system, user, assistant] }
+              content: { type: string }
+        max_tokens: { type: integer, minimum: 1, maximum: 4096 }
+        temperature: { type: number, minimum: 0, maximum: 2 }
+
+    InferenceResponse:
+      type: object
+      description: OpenAI chat-completions response; passed through unchanged.
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        require_confirmation: { type: boolean, default: false }
+
+security:
+  - PlatformSession: []
+
+paths:
+  /api/gcp/credentials:
+    get:
+      summary: Get current user's GCP credential status.
+      responses:
+        "200":
+          description: Status (no secret material returned).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GCPCredentialsStatus" }
+        "401": { description: No active session. }
+
+    post:
+      summary: Save or replace the user's GCP credentials.
+      description: |
+        Validates the key+billing account against real GCP before persisting.
+        If validation fails, nothing is saved and a 400 is returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GCPCredentialsRequest" }
+      responses:
+        "200":
+          description: Saved and validated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GCPCredentialsStatus" }
+        "400":
+          description: Validation failed; credentials NOT saved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { description: No active session. }
+
+    delete:
+      summary: Remove the user's stored credentials.
+      description: |
+        Blocked if the user has any deployment in a non-terminal state.
+      responses:
+        "204": { description: Deleted. }
+        "409":
+          description: User still has active deployments.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { description: No active session. }
+
+  /api/deployments:
+    get:
+      summary: List the caller's deployments.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Deployment" }
+        "401": { description: No active session. }
+
+    post:
+      summary: Initiate a real public-model deployment to GKE.
+      description: |
+        Returns immediately with a queued/deploying record. Background
+        orchestrator drives it to running or failed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeployRequest" }
+      responses:
+        "202":
+          description: Deployment accepted; monitor via GET /api/deployments/{id}.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "400":
+          description: Model not supported for real deployment (e.g. not text-gen).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: |
+            One of: 3-deployment cap reached; credentials missing/invalid;
+            or duplicate-model confirm required (body.require_confirmation=true).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { description: No active session. }
+
+  /api/deployments/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: Get a deployment's full detail.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeploymentDetail" }
+        "404": { description: Not found (or not owned by caller). }
+        "401": { description: No active session. }
+    delete:
+      summary: Delete a deployment (tears down the GCP project).
+      responses:
+        "202":
+          description: Deletion accepted; watch status via GET.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "404": { description: Not found. }
+        "401": { description: No active session. }
+
+  /api/deployments/{id}/dismiss:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      summary: Permanently remove a "lost" deployment record.
+      responses:
+        "204": { description: Dismissed. }
+        "409":
+          description: Only valid when status == "lost".
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { description: Not found. }
+        "401": { description: No active session. }
+
+  /api/deployments/{id}/inference:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      summary: Proxied OpenAI-style inference call to the deployed model.
+      description: |
+        Server enforces a 120s read timeout (SC-008). On timeout returns 504.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InferenceRequest" }
+      responses:
+        "200":
+          description: Model response.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InferenceResponse" }
+        "409":
+          description: Deployment is not in "running" status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "504":
+          description: Model did not respond within 120s.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { description: Not found. }
+        "401": { description: No active session. }

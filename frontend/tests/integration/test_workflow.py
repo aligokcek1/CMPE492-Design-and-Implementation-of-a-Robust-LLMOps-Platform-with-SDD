@@ -195,9 +195,12 @@ def test_upload_shows_per_folder_progress(at):
 # ---------------------------------------------------------------------------
 # T030: Spinner visible during public repo deployment
 # ---------------------------------------------------------------------------
-def test_public_deploy_spinner_visible(at):
-    """The deploy section must use st.spinner. We verify the spinner text
-    appears in the rendered output when a deploy is triggered."""
+def test_public_deploy_shows_gke_deploy_button(at):
+    """After feature 007 / T042a, public-repo deploys go to GKE Autopilot
+    with fixed cheapest-settings (L4 GPU, no user config). Per FR-004 there
+    are no CPU/GPU selectors in the public-repo panel anymore — there's a
+    single "Deploy to GKE" button.
+    """
     at.session_state["session_token"] = "session_valid"
     at.session_state["hf_username"] = "testuser"
     at.session_state["_session_checked"] = True
@@ -208,13 +211,16 @@ def test_public_deploy_spinner_visible(at):
         "file_count": 12,
         "size_bytes": 440473133,
     }
-    at.run()
+    with patch("src.services.api_client.requests.get") as mock_get:
+        # /api/gcp/credentials status check
+        mock_get.return_value = MagicMock(
+            ok=True,
+            json=lambda: {"configured": True, "validation_status": "valid"},
+        )
+        at.run()
     assert not at.exception
-    deploy_buttons = [
-        b for b in at.button
-        if "cpu" in b.label.lower() or "gpu" in b.label.lower()
-    ]
-    assert len(deploy_buttons) >= 1, "Expected CPU/GPU deploy buttons"
+    deploy_buttons = [b for b in at.button if "deploy to gke" in b.label.lower()]
+    assert len(deploy_buttons) >= 1, "Expected 'Deploy to GKE' button after T042a"
 
 
 def test_retry_without_duplicate_uses_same_idempotency_key(at):

@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 from secrets import token_urlsafe
 from typing import Any
 
-
 INACTIVITY_TIMEOUT_SECONDS = 24 * 60 * 60
 
 

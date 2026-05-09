@@ -1,8 +1,9 @@
 import asyncio
 import os
+from typing import Any
+
 from huggingface_hub import HfApi
 from huggingface_hub.utils import HfHubHTTPError
-from typing import Any
 
 from ..models.upload import FolderUploadResult
 

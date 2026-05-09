@@ -126,3 +126,120 @@ def mock_deploy(
     )
     _raise_for_status(response)
     return response.json()
+
+
+def save_gcp_credentials(
+    session_token: str,
+    service_account_json: str,
+    billing_account_id: str,
+    gcp_parent: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "service_account_json": service_account_json,
+        "billing_account_id": billing_account_id,
+    }
+    if gcp_parent:
+        payload["gcp_parent"] = gcp_parent
+    response = requests.post(
+        f"{BACKEND_URL}/api/gcp/credentials",
+        json=payload,
+        headers=_session_headers(session_token),
+        timeout=30,
+    )
+    _raise_for_status(response)
+    return response.json()
+
+
+def get_gcp_credentials_status(session_token: str) -> dict[str, Any]:
+    response = requests.get(
+        f"{BACKEND_URL}/api/gcp/credentials",
+        headers=_session_headers(session_token),
+        timeout=15,
+    )
+    _raise_for_status(response)
+    return response.json()
+
+
+def delete_gcp_credentials(session_token: str) -> None:
+    response = requests.delete(
+        f"{BACKEND_URL}/api/gcp/credentials",
+        headers=_session_headers(session_token),
+        timeout=30,
+    )
+    _raise_for_status(response)
+
+
+def create_deployment(
+    session_token: str,
+    hf_model_id: str,
+    force: bool = False,
+) -> dict[str, Any]:
+    response = requests.post(
+        f"{BACKEND_URL}/api/deployments",
+        json={"hf_model_id": hf_model_id, "force": force},
+        headers=_session_headers(session_token),
+        timeout=60,
+    )
+    _raise_for_status(response)
+    return response.json()
+
+
+def get_deployment(session_token: str, deployment_id: str) -> dict[str, Any]:
+    response = requests.get(
+        f"{BACKEND_URL}/api/deployments/{deployment_id}",
+        headers=_session_headers(session_token),
+        timeout=30,
+    )
+    _raise_for_status(response)
+    return response.json()
+
+
+def list_deployments(session_token: str) -> list[dict[str, Any]]:
+    response = requests.get(
+        f"{BACKEND_URL}/api/deployments",
+        headers=_session_headers(session_token),
+        timeout=30,
+    )
+    _raise_for_status(response)
+    return response.json()
+
+
+def delete_deployment(session_token: str, deployment_id: str) -> dict[str, Any]:
+    response = requests.delete(
+        f"{BACKEND_URL}/api/deployments/{deployment_id}",
+        headers=_session_headers(session_token),
+        timeout=60,
+    )
+    _raise_for_status(response)
+    return response.json()
+
+
+def dismiss_deployment(session_token: str, deployment_id: str) -> None:
+    response = requests.post(
+        f"{BACKEND_URL}/api/deployments/{deployment_id}/dismiss",
+        headers=_session_headers(session_token),
+        timeout=30,
+    )
+    _raise_for_status(response)
+
+
+def run_inference(
+    session_token: str,
+    deployment_id: str,
+    messages: list[dict[str, str]],
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+) -> dict[str, Any]:
+    payload = {"messages": messages}
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    if temperature is not None:
+        payload["temperature"] = temperature
+    response = requests.post(
+        f"{BACKEND_URL}/api/deployments/{deployment_id}/inference",
+        json=payload,
+        headers=_session_headers(session_token),
+        timeout=130,  # slightly more than the backend's 120s so the server times out first
+    )
+    _raise_for_status(response)
+    return response.json()

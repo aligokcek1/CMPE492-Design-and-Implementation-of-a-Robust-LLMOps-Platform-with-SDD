@@ -1,5 +1,6 @@
-from pydantic import BaseModel, field_validator
 from datetime import datetime
+
+from pydantic import BaseModel, field_validator
 
 
 class HuggingFaceAuth(BaseModel):

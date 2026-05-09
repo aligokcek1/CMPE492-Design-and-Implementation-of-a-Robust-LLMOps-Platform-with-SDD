@@ -13,7 +13,14 @@ import streamlit as st  # noqa: E402
 from src.components.auth import render_login  # noqa: E402
 from src.components.upload import render_upload_section, render_model_selector  # noqa: E402
 from src.components.deploy import render_deployment_section, render_public_repo_deploy_section  # noqa: E402
-from src.services.api_client import APIError, get_session_status, logout  # noqa: E402
+from src.components.deployments_list import render_deployments_list  # noqa: E402
+from src.components.gcp_credentials import render_gcp_credentials_section  # noqa: E402
+from src.services.api_client import (  # noqa: E402
+    APIError,
+    get_gcp_credentials_status,
+    get_session_status,
+    logout,
+)
 from src.services.session_client import (  # noqa: E402
     clear_session,
     get_persisted_session_token,
@@ -56,6 +63,24 @@ def _try_restore_session() -> None:
         clear_session()
     except Exception:
         clear_session()
+
+
+def _render_credentials_invalid_banner() -> None:
+    """Persistent FR-015 warning: new deploys/deletes blocked until creds updated."""
+    token = get_session_token()
+    if not token:
+        return
+    try:
+        status = get_gcp_credentials_status(token)
+    except Exception:
+        return
+    if status.get("configured") and status.get("validation_status") == "invalid":
+        st.warning(
+            "⚠️ **Your GCP credentials are invalid.** "
+            "New deployments and deletions are blocked until you update them "
+            "in the **☁️ GCP Credentials** tab. Already-running deployments are unaffected.",
+            icon="⚠️",
+        )
 
 
 def render_sidebar() -> None:
@@ -104,8 +129,16 @@ def main() -> None:
         "then proceed to **deploy** it."
     )
 
-    tab_upload, tab_select, tab_deploy = st.tabs(
-        ["📤 Upload Model", "🔍 Select Existing", "🚀 Deploy"]
+    _render_credentials_invalid_banner()
+
+    tab_upload, tab_select, tab_deploy, tab_deployments, tab_gcp = st.tabs(
+        [
+            "📤 Upload Model",
+            "🔍 Select Existing",
+            "🚀 Deploy",
+            "📊 Deployments",
+            "☁️ GCP Credentials",
+        ]
     )
 
     with tab_upload:
@@ -132,6 +165,18 @@ def main() -> None:
             render_public_repo_deploy_section()
         except Exception as exc:
             st.error(f"An unexpected error occurred in the public deploy section: {exc}")
+
+    with tab_deployments:
+        try:
+            render_deployments_list()
+        except Exception as exc:
+            st.error(f"An unexpected error occurred in the deployments list: {exc}")
+
+    with tab_gcp:
+        try:
+            render_gcp_credentials_section()
+        except Exception as exc:
+            st.error(f"An unexpected error occurred in the GCP credentials section: {exc}")
 
 
 if __name__ == "__main__":

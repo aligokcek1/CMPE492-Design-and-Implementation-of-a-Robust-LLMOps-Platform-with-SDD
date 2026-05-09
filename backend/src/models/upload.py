@@ -1,6 +1,7 @@
-from enum import Enum
-from pydantic import BaseModel, field_validator
 import re
+from enum import Enum
+
+from pydantic import BaseModel, field_validator
 
 
 class UploadStatus(str, Enum):

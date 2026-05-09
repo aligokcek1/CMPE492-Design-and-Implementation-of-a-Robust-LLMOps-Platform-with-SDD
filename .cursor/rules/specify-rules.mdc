@@ -6,11 +6,12 @@ alwaysApply: true
 
 # CMPE492-Design-and-Implementation-of-a-Robust-LLMOps-Platform Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-12
+Auto-generated from all feature plans. Last updated: 2026-04-16
 
 ## Active Technologies
 - Python 3.11 (backend + frontend) + FastAPI 0.135, Pydantic 2.12, huggingface_hub 1.7, Streamlit 1.55, pytest, pytest-asyncio, httpx (006-session-persistence)
 - In-memory backend session registry (process-local) + browser cookie-persisted session token for Streamlit client continuity; no database (006-session-persistence)
+- SQLite file at `backend/data/llmops.db` (2 tables: `gcp_credentials`, `deployments`). Service-account JSON encrypted with Fernet; key read from `LLMOPS_ENCRYPTION_KEY` env var. (007-gke-inference-pipeline)
 
 ## Project Structure
 
@@ -58,25 +59,33 @@ frontend/
 ## Commands
 
 ```bash
-cd backend && pytest            # Backend contract tests (currently 32 tests)
-cd frontend && pytest           # Frontend integration tests (currently 13 tests)
+cd backend && pytest            # Backend contract + integration tests (FakeGCPProvider — no cloud calls)
+cd frontend && pytest           # Frontend integration tests
 cd backend && ruff check .      # Lint backend
 cd frontend && ruff check .     # Lint frontend
 cd backend && uvicorn src.main:app --reload   # Run backend dev server
 cd frontend && streamlit run src/app.py       # Run frontend dev server
+
+# Opt-in manifest validation against a real Kubernetes API server using server-side dry-run.
+# Requires a scratch kubeconfig; NEVER creates real resources (dry_run=["All"]).
+LLMOPS_K8S_DRYRUN_KUBECONFIG=~/.kube/scratch-config \
+  cd backend && pytest tests/dryrun
 ```
 
 ## Code Style
 
 Python 3.11: Follow standard conventions. Ruff for linting.
 
-## Key Features (implemented)
-- **004-robust-model-upload**: HF token auth, single-file model upload, model listing, mock GCP deployment
-- **005-folder-upload-repo-deploy**: Native directory picker upload (Streamlit `accept_multiple_files="directory"`), multi-folder per-folder error isolation, public repo metadata fetch (`GET /api/models/public`), public repo mock deployment, upload size limit (5 GB), path traversal protection
-- **006-session-persistence**: Backend-issued platform sessions (`POST /api/auth/verify`, `GET /api/auth/session`, `POST /api/auth/logout`), 24h sliding inactivity expiration, session-auth-protected endpoints, upload/deploy idempotency keys, structured session-expired errors, frontend cookie-backed session restore
+## Recent Changes
+- 007-gke-inference-pipeline: Added Python 3.11 (backend + frontend) and encrypted SQLite-backed credential/deployment persistence.
+- 006-session-persistence: Added backend-managed platform sessions, restore/logout endpoints, and idempotent upload/deploy retries.
+- 005-folder-upload-repo-deploy: Added directory upload, per-folder error isolation, public repo metadata fetch, and public repo mock deployment.
+- 004-robust-model-upload: Added HF token verification, model upload/listing flow, and mock GCP deployment integration.
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
 
-## Recent Changes
-- 006-session-persistence: Implemented backend-managed session lifecycle, session restore endpoint, current-device logout, idempotent upload/deploy retries, and browser cookie-backed frontend session persistence
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan.
+<!-- SPECKIT END -->
