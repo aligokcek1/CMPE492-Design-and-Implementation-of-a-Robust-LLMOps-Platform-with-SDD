@@ -63,10 +63,11 @@ At every stage of the deployment flow — before selection, during provisioning,
 
 - What happens when the user changes the hardware selector after fetching model info but before clicking Deploy? The most recently selected hardware type is used; no stale-state risk.
 - What if the selected model is too large for CPU (e.g. exceeds the CPU node's memory limit)? The deployment enters `failed` with a message specific to CPU resource limits.
-- What if the Lightning AI API key is invalid or expired? The GPU deployment immediately transitions to `failed` with a message explaining that the API key is invalid and directing the user to update it.
+- What if the Lightning AI API key is invalid or expired? If caught at save time, the ⚡ Lightning AI tab shows the validation failure immediately. If the key becomes invalid after saving (e.g. revoked), the next SDK call flips `validation_status` to `invalid`, subsequent GPU deployments are blocked with `credentials_invalid`, and the UI directs the user to re-enter their key.
 - What if Lightning AI's platform is temporarily unavailable? The GPU deployment is marked `failed` with a transient-error message and a suggestion to retry.
 - What if a GPU deployment stays in `deploying` for an extended period? The platform does not impose its own timeout; the deployment remains `deploying` until Lightning AI reports a terminal state (success or failure). The UI displays a live status message from Lightning AI so the user can see progress.
 - What if neither CPU nor GPU is selected when the user clicks Deploy? The Deploy button is disabled until a hardware type is selected; submission without selection is not possible.
+- What if a user already has 3 active deployments (any mix of CPU and GPU) and attempts another? The existing `concurrent_deployment_limit` error is returned regardless of hardware type; the error message in the UI remains unchanged.
 - What if the Lightning AI SDK call to stop/delete a deployment fails (e.g. the deployment was already removed on Lightning AI's side)? The backend treats this as a successful delete — the record is marked `deleted` locally, matching the `GCPNotFoundError` handling in the CPU delete path.
 - What if a user has GCP credentials but no Lightning AI API key and selects GPU? The UI shows a pre-flight error directing the user to the **⚡ Lightning AI** tab to enter their API key before the deploy request is submitted.
 
@@ -86,10 +87,12 @@ At every stage of the deployment flow — before selection, during provisioning,
 - **FR-008**: Live status messages during provisioning MUST be hardware-and-platform-specific: CPU deploys reference GKE and CPU; GPU deploys reference Lightning AI and GPU.
 - **FR-009**: The Deploy button MUST be disabled until the user has selected a hardware type AND model info has been fetched successfully.
 - **FR-010**: The existing mock-deploy flow for personal models (features 004/005/006) MUST remain unchanged; this feature's hardware selector applies only to the public-repo real-deploy flow.
+- **FR-019**: The existing 3-concurrent-deployment limit MUST apply across CPU and GPU deployments combined (shared cap); no per-type split is introduced. The existing `deployment_store.create` check requires no modification to enforce this.
 - **FR-011**: When a GPU deployment fails due to a Lightning AI API key problem, the status message MUST name Lightning AI and direct the user to check or update their API key.
 - **FR-012**: The inference proxy endpoint (`POST /api/deployments/{id}/inference`) MUST work for both CPU (GKE) and GPU (Lightning AI) deployments; the proxy forwards to whichever endpoint URL is stored on the deployment record.
-- **FR-013**: The platform MUST perform a pre-flight credential check before submitting a GPU deployment: if no Lightning AI API key is configured, the request MUST fail immediately with a `credentials_missing` error before any Lightning AI API call is made.
-- **FR-014**: The Streamlit app MUST include a dedicated **⚡ Lightning AI** tab where users can enter, view (masked), and delete their Lightning AI API key — mirroring the UX of the existing **☁️ GCP Credentials** tab.
+- **FR-013**: The platform MUST perform a pre-flight credential check before submitting a GPU deployment: if no Lightning AI API key is configured the request MUST fail with `credentials_missing`; if the key's `validation_status` is `invalid` the request MUST fail with `credentials_invalid` — before any Lightning AI SDK call is made.
+- **FR-014**: The Streamlit app MUST include a dedicated **⚡ Lightning AI** tab where users can enter, view (masked), and delete their Lightning AI API key. On save, the backend MUST validate the key via a lightweight Lightning AI SDK call and display the result (`valid` / `invalid`) — mirroring the UX of the existing **☁️ GCP Credentials** tab.
+- **FR-018**: The Lightning AI credential row MUST track `validation_status` (`valid` / `invalid`). If a GPU deployment or status-poll later causes an auth error from the Lightning AI SDK, the backend MUST flip `validation_status` to `invalid` and block subsequent GPU deployments — mirroring the GCP `credentials_invalid` guard (FR-015 of feature 007).
 - **FR-016**: The `deployments` table schema MUST be extended with a nullable `lightning_ai_deployment_id` column and a `hardware_type` column; the existing `gcp_project_id`, `gke_cluster_name`, and `gke_region` columns MUST become nullable via additive migration so GPU rows coexist with CPU rows without dummy values.
 - **FR-017**: `DELETE /api/deployments/{id}` MUST support GPU deployments: when `hardware_type = gpu`, the backend MUST call the Lightning AI SDK to stop/delete the Lightning AI deployment before marking the record `deleted`, mirroring the GCP project teardown flow for CPU deployments.
 - **FR-015**: The platform MUST NOT impose a deployment timeout for GPU deployments on Lightning AI; the polling loop MUST continue until Lightning AI reports a terminal state (`running` or an error). The UI MUST display the current Lightning AI-reported status message during the wait so users are not left with a silent spinner.
@@ -100,7 +103,7 @@ At every stage of the deployment flow — before selection, during provisioning,
 - **DeploymentRow** (extended): Gains a `hardware_type` field (`cpu` | `gpu`) and a nullable `lightning_ai_deployment_id` field. The existing GKE-specific columns (`gcp_project_id`, `gke_cluster_name`, `gke_region`) become nullable so GPU rows can coexist in the same table without dummy values. The polling loop uses `lightning_ai_deployment_id` (GPU rows) or `gcp_project_id` (CPU rows) to query the appropriate provider.
 - **TGI-CPU Manifest** (existing, unchanged): Kubernetes manifest for HuggingFace TGI on CPU (`vllm_manifest.py` — legacy name retained).
 - **LitServe Server Definition** (new): A LitServe server script (or equivalent programmatic representation) that wraps vLLM for the target HF model, submitted to Lightning AI's cloud deployment API.
-- **Lightning AI Credential** (new): A per-user Lightning AI API key encrypted with Fernet and stored in `llmops.db` under a `lightning_ai` credential type, using the same `LLMOPS_ENCRYPTION_KEY` environment variable as GCP credentials.
+- **Lightning AI Credential** (new): A per-user Lightning AI API key encrypted with Fernet and stored in `llmops.db` under a `lightning_ai` credential type. Tracks `validation_status` (`valid` / `invalid`), validated on save via a lightweight Lightning AI SDK call — mirroring `GCPCredentialsRow` exactly. New GPU deployments are blocked when `validation_status = invalid`.
 
 ---
 
@@ -120,7 +123,7 @@ At every stage of the deployment flow — before selection, during provisioning,
 
 ## Clarifications
 
-### Session 2026-05-10 (round 2)
+### Session 2026-05-10 (round 1)
 
 - Q: How should the Lightning AI API key be stored at rest? → A: Encrypted with Fernet in `llmops.db`, mirroring GCP credential storage exactly (same `LLMOPS_ENCRYPTION_KEY` env var).
 - Q: How should the platform track GPU deployment status after submission to Lightning AI? → A: Backend polls Lightning AI's status API on a timer (mirrors existing GCP 30 s status-refresh loop).
@@ -133,6 +136,11 @@ At every stage of the deployment flow — before selection, during provisioning,
 - Q: How should the Lightning AI deployment ID returned by the SDK be stored on the deployment record? → A: New nullable `lightning_ai_deployment_id` column on `DeploymentRow` (mirrors dedicated GKE columns `gcp_project_id`, `gke_cluster_name`, `gke_region`); the three GKE-specific columns must also become nullable to accommodate GPU rows that have no GCP project.
 - Q: When a user deletes a GPU deployment from the platform UI, what should happen on Lightning AI? → A: Call the Lightning AI SDK to stop/delete the deployment, then mark the record `deleted` locally — full teardown mirroring the GCP delete flow.
 
+### Session 2026-05-10 (round 3)
+
+- Q: Should the Lightning AI API key be validated on save? → A: Yes — validate on save via a lightweight Lightning AI SDK call; persist `validation_status` (`valid` / `invalid`) on the credential row, mirroring GCP credential behaviour; block new GPU deployments when status is `invalid`.
+- Q: Does the 3-deployment concurrent limit apply across CPU and GPU combined, or separately per type? → A: Shared limit — 3 concurrent deployments total across CPU and GPU combined; reuses the existing check without modification.
+
 ---
 
 ## Assumptions
@@ -141,7 +149,7 @@ At every stage of the deployment flow — before selection, during provisioning,
 - The Lightning AI Python SDK (`lightning` package) is used to submit LitServe server definitions and poll deployment status; the SDK returns a deployment ID stored in the new `lightning_ai_deployment_id` column and an endpoint URL stored in the existing `endpoint_url` column.
 - The existing `gcp_project_id`, `gke_cluster_name`, and `gke_region` columns on `DeploymentRow` become nullable via an additive migration so GPU rows can be stored in the same table without placeholder values.
 - The Lightning AI endpoint serves an OpenAI-compatible HTTP API (standard for vLLM), so the existing inference proxy forwards requests without modification.
-- Each user's Lightning AI API key is encrypted with Fernet and stored in `llmops.db` under a `lightning_ai` credential type, reusing the existing `LLMOPS_ENCRYPTION_KEY` environment variable; it is stored separately from GCP credentials.
+- Each user's Lightning AI API key is encrypted with Fernet and stored in `llmops.db` under a `lightning_ai` credential type, reusing the existing `LLMOPS_ENCRYPTION_KEY` environment variable; it is stored separately from GCP credentials and tracks `validation_status` validated on save via the Lightning AI SDK.
 - GPU deployments bypass the GCP orchestrator (no GKE cluster, no GCP project); they use a separate Lightning AI orchestrator path that polls Lightning AI's status API on the same 30-second interval used by the GCP status-refresh loop.
 - Lightning AI handles GPU node selection, autoscaling, and uptime; the platform does not need to manage GPU node pools or Kubernetes resource specs for the GPU path.
 - The hardware selector applies exclusively to the **Deploy a Public Repository** flow. The personal-model mock-deploy flow is out of scope for this feature.
