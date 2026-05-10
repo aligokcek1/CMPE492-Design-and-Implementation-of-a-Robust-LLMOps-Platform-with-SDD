@@ -6,54 +6,78 @@ alwaysApply: true
 
 # CMPE492-Design-and-Implementation-of-a-Robust-LLMOps-Platform Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-16
+Auto-generated from all feature plans. Last updated: 2026-05-10
 
 ## Active Technologies
 - Python 3.11 (backend + frontend) + FastAPI 0.135, Pydantic 2.12, huggingface_hub 1.7, Streamlit 1.55, pytest, pytest-asyncio, httpx (006-session-persistence)
 - In-memory backend session registry (process-local) + browser cookie-persisted session token for Streamlit client continuity; no database (006-session-persistence)
-- SQLite file at `backend/data/llmops.db` (2 tables: `gcp_credentials`, `deployments`). Service-account JSON encrypted with Fernet; key read from `LLMOPS_ENCRYPTION_KEY` env var. (007-gke-inference-pipeline)
+- SQLite file at `backend/data/llmops.db` (3 tables: `gcp_credentials`, `deployments`, `lightning_ai_credentials`). Credentials encrypted with Fernet; key read from `LLMOPS_ENCRYPTION_KEY` env var. (007-gke-inference-pipeline, 008-gpu-cpu-deploy)
+- `lightning-sdk` (Lightning AI Python SDK) for GPU deployment submission, status polling, and teardown via Lightning AI managed cloud. `litserve` for LitServe+vLLM server script generation. (008-gpu-cpu-deploy)
 
 ## Project Structure
 
 ```text
 backend/
 ├── src/
-│   ├── main.py                    # FastAPI app entry point
+│   ├── main.py                              # FastAPI app entry point; registers all routers
 │   ├── api/
-│   │   ├── auth.py                # POST /api/auth/verify, GET /api/auth/session, POST /api/auth/logout
-│   │   ├── auth_helpers.py        # Shared session auth dependency
-│   │   ├── deployment.py          # POST /api/deployment/mock (+ idempotency support)
-│   │   ├── errors.py              # Global error handler
-│   │   ├── models.py              # GET /api/models, GET /api/models/public (session-auth protected)
-│   │   └── upload.py              # POST /api/upload/start (multi-folder, path sanitisation, idempotency)
+│   │   ├── auth.py                          # POST /api/auth/verify, GET /api/auth/session, POST /api/auth/logout
+│   │   ├── auth_helpers.py                  # Shared session auth dependency
+│   │   ├── deployment.py                    # Mock deploy + real GKE/Lightning AI deploy/list/get/delete/inference
+│   │   ├── errors.py                        # Global error handler
+│   │   ├── gcp_credentials.py               # GET/POST/DELETE /api/gcp/credentials
+│   │   ├── lightning_ai_credentials.py      # GET/POST/DELETE /api/lightning/credentials (008)
+│   │   ├── models.py                        # GET /api/models, GET /api/models/public
+│   │   └── upload.py                        # POST /api/upload/start
 │   ├── models/
-│   │   ├── auth.py                # TokenVerifyResponse, SessionStatusResponse, LogoutResponse
-│   │   ├── deployment.py
-│   │   └── upload.py              # UploadStartResponse, FolderUploadResult, PublicModelInfoResponse
+│   │   ├── auth.py
+│   │   ├── deployment.py                    # DeployRequest(hardware_type), Deployment, DeploymentDetail
+│   │   ├── gcp_credentials.py
+│   │   ├── lightning_ai_credentials.py      # LightningAICredentialRequest/Status (008)
+│   │   └── upload.py
+│   ├── db/
+│   │   ├── models.py                        # GCPCredentialsRow, LightningAICredentialsRow (008), DeploymentRow
+│   │   └── migrations.py                    # ensure_schema() — structural + additive migrations
 │   └── services/
-│       ├── huggingface.py         # verify_hf_token, upload_model_folder, fetch_public_model_info, list_user_models
+│       ├── credentials_store.py             # GCP credential CRUD + Fernet encrypt/decrypt
+│       ├── lightning_ai_credentials_store.py # Lightning AI key CRUD (008)
+│       ├── lightning_ai_provider.py         # LightningAIProvider protocol + real SDK impl (008)
+│       ├── lightning_ai_fake_provider.py    # FakeLightningAIProvider for tests (008)
+│       ├── litserve_gpu.py                  # generate(hf_model_id) → LitServe+vLLM script string (008)
+│       ├── deployment_store.py              # DeploymentStore — hardware_type-aware CRUD
+│       ├── deployment_orchestrator.py       # GKE (CPU) + Lightning AI (GPU) orchestration
+│       ├── vllm_manifest.py                 # TGI-CPU K8s manifest generator (legacy name retained)
+│       ├── huggingface.py
+│       ├── inference_proxy.py
+│       ├── kube_client.py
 │       ├── mock_gcp.py
-│       └── session_store.py       # In-memory session lifecycle + idempotency record store
+│       ├── session_store.py
+│       ├── gcp_provider.py / gcp_real_provider.py / gcp_fake_provider.py
+│       └── crypto.py
 └── tests/contract/
-    ├── conftest.py                # Shared transport and session-store reset fixtures
+    ├── conftest.py                          # FakeGCPProvider + FakeLightningAIProvider fixtures
     ├── test_auth_api.py
-    ├── test_deployment_api.py
-    ├── test_models_api.py         # Includes public model info tests (200/400/401/403/404)
-    └── test_upload_api.py         # Includes multi-folder, path traversal, size limit, idempotency tests
+    ├── test_deployment_api.py               # CPU + GPU deploy/delete/inference tests
+    ├── test_lightning_ai_credentials_api.py # Lightning AI credential CRUD tests (008)
+    ├── test_models_api.py
+    └── test_upload_api.py
 
 frontend/
-├── conftest.py                    # sys.path + session-state reset for pytest
+├── conftest.py
 ├── src/
-│   ├── app.py                     # Streamlit entry point — tabs: Upload, Select, Deploy
+│   ├── app.py                               # 6 tabs: Upload, Select, Deploy, Deployments, GCP Credentials, ⚡ Lightning AI
 │   ├── components/
-│   │   ├── auth.py                # Login form
-│   │   ├── deploy.py              # render_deployment_section, render_public_repo_deploy_section
-│   │   └── upload.py              # Native directory picker + individual file uploader
+│   │   ├── auth.py
+│   │   ├── deploy.py                        # Hardware selector (CPU/GPU radio) + GPU error handling
+│   │   ├── gcp_credentials.py
+│   │   ├── lightning_ai_credentials.py      # ⚡ Lightning AI tab component (008)
+│   │   ├── deployments_list.py
+│   │   └── upload.py
 │   └── services/
-│       ├── api_client.py          # verify/get-session/logout, upload/list/fetch/deploy (+ idempotency headers)
-│       └── session_client.py      # Streamlit session + browser cookie persistence sync
+│       ├── api_client.py                    # All API calls including Lightning AI credential endpoints
+│       └── session_client.py
 └── tests/integration/
-    └── test_workflow.py           # End-to-end Streamlit AppTest tests (session restore + retry behaviors)
+    └── test_workflow.py                     # Includes hardware selector + GPU deploy scenarios (008)
 ```
 
 ## Commands
@@ -77,15 +101,16 @@ LLMOPS_K8S_DRYRUN_KUBECONFIG=~/.kube/scratch-config \
 Python 3.11: Follow standard conventions. Ruff for linting.
 
 ## Recent Changes
-- 007-gke-inference-pipeline: Added Python 3.11 (backend + frontend) and encrypted SQLite-backed credential/deployment persistence.
+- 008-gpu-cpu-deploy: Added GPU/CPU hardware selector for public model deployment. GPU path uses Lightning AI managed cloud (LitServe+vLLM); CPU path unchanged (GKE Autopilot + TGI-CPU). New ⚡ Lightning AI credentials tab. `deployments` table extended with `hardware_type` and `lightning_ai_deployment_id`; GKE columns made nullable.
+- 007-gke-inference-pipeline: Added real GKE Autopilot deployment pipeline, GCP credential management, deployment orchestrator, status polling loop, and inference proxy.
 - 006-session-persistence: Added backend-managed platform sessions, restore/logout endpoints, and idempotent upload/deploy retries.
 - 005-folder-upload-repo-deploy: Added directory upload, per-folder error isolation, public repo metadata fetch, and public repo mock deployment.
-- 004-robust-model-upload: Added HF token verification, model upload/listing flow, and mock GCP deployment integration.
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan.
+shell commands, and other important information, read the current plan:
+`specs/008-gpu-cpu-deploy/plan.md`
 <!-- SPECKIT END -->

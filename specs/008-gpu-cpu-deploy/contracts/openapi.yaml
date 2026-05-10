@@ -1,0 +1,332 @@
+openapi: 3.0.3
+info:
+  title: LLMOps Platform — Feature 008 (GPU/CPU Hardware Selector)
+  version: "0.1.0"
+  description: |
+    New and modified HTTP endpoints introduced by feature 008.
+    All endpoints require an active platform session (feature 006).
+    Session auth is carried via the platform session cookie/token.
+
+servers:
+  - url: http://localhost:8000
+
+components:
+  securitySchemes:
+    PlatformSession:
+      type: apiKey
+      in: cookie
+      name: llmops_session
+
+  schemas:
+
+    # ------------------------------------------------------------------ #
+    # Lightning AI Credentials                                             #
+    # ------------------------------------------------------------------ #
+
+    LightningAICredentialRequest:
+      type: object
+      required: [api_key]
+      properties:
+        api_key:
+          type: string
+          description: Raw Lightning AI API key. Encrypted at rest; never returned.
+          example: "lai-XXXXXXXXXXXXXXXXXXXX"
+
+    LightningAICredentialStatus:
+      type: object
+      required: [configured]
+      properties:
+        configured:
+          type: boolean
+          description: True if a key has been saved for this user.
+        validation_status:
+          type: string
+          enum: [valid, invalid]
+          nullable: true
+          description: Result of the last SDK validation call.
+        validation_error_message:
+          type: string
+          nullable: true
+          description: Error detail from the SDK if validation failed.
+        last_validated_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    # ------------------------------------------------------------------ #
+    # Deployment (modified)                                                #
+    # ------------------------------------------------------------------ #
+
+    DeployRequest:
+      type: object
+      required: [hf_model_id, hardware_type]
+      properties:
+        hf_model_id:
+          type: string
+          example: "Qwen/Qwen3-1.7B"
+        hardware_type:
+          type: string
+          enum: [cpu, gpu]
+          description: |
+            "cpu" — routes to existing GKE Autopilot + TGI-CPU path (requires GCP credentials).
+            "gpu" — routes to Lightning AI cloud + LitServe/vLLM path (requires Lightning AI key).
+        force:
+          type: boolean
+          default: false
+          description: Bypass the duplicate-model confirmation guard.
+
+    Deployment:
+      type: object
+      required: [id, hf_model_id, hf_model_display_name, hardware_type, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        hf_model_id:
+          type: string
+        hf_model_display_name:
+          type: string
+        hardware_type:
+          type: string
+          enum: [cpu, gpu]
+        status:
+          type: string
+          enum: [queued, deploying, running, failed, deleting, deleted, lost]
+        status_message:
+          type: string
+          nullable: true
+        endpoint_url:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DeploymentDetail:
+      allOf:
+        - $ref: '#/components/schemas/Deployment'
+        - type: object
+          properties:
+            # CPU-specific (null for GPU deployments)
+            gcp_project_id:
+              type: string
+              nullable: true
+            gke_cluster_name:
+              type: string
+              nullable: true
+            gke_region:
+              type: string
+              nullable: true
+            gcp_console_url:
+              type: string
+              nullable: true
+            # GPU-specific (null for CPU deployments)
+            lightning_ai_deployment_id:
+              type: string
+              nullable: true
+
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        require_confirmation:
+          type: boolean
+          nullable: true
+
+# ------------------------------------------------------------------ #
+# Paths                                                                #
+# ------------------------------------------------------------------ #
+
+paths:
+
+  # ---- Lightning AI Credentials ------------------------------------ #
+
+  /api/lightning/credentials:
+    get:
+      summary: Get Lightning AI credential status for current user
+      operationId: getLightningCredentials
+      security: [{ PlatformSession: [] }]
+      tags: [lightning-ai]
+      responses:
+        '200':
+          description: Status of the user's Lightning AI credential (key never returned)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LightningAICredentialStatus'
+        '401':
+          description: Not authenticated
+
+    post:
+      summary: Save and validate a Lightning AI API key
+      operationId: saveLightningCredentials
+      security: [{ PlatformSession: [] }]
+      tags: [lightning-ai]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LightningAICredentialRequest'
+      responses:
+        '200':
+          description: Key saved; validation result included in response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LightningAICredentialStatus'
+        '400':
+          description: Key rejected by Lightning AI SDK on validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: lightning_auth_error
+                message: "The provided Lightning AI API key is invalid or has expired."
+        '401':
+          description: Not authenticated
+
+    delete:
+      summary: Delete the current user's Lightning AI API key
+      operationId: deleteLightningCredentials
+      security: [{ PlatformSession: [] }]
+      tags: [lightning-ai]
+      responses:
+        '204':
+          description: Key deleted (or was not configured — idempotent)
+        '401':
+          description: Not authenticated
+
+  # ---- Deployments (modified) ------------------------------------- #
+
+  /api/deployments:
+    post:
+      summary: Create a new deployment (CPU or GPU)
+      operationId: createDeployment
+      security: [{ PlatformSession: [] }]
+      tags: [deployments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeployRequest'
+      responses:
+        '202':
+          description: Deployment queued; returns initial record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '400':
+          description: Model not found on HuggingFace or unsupported type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                model_not_found:
+                  value: { code: model_not_found, message: "Repository not found." }
+                unsupported_model:
+                  value: { code: unsupported_model, message: "Only text-generation models are supported." }
+        '401':
+          description: Not authenticated
+        '409':
+          description: Pre-flight check failed or duplicate model
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                gcp_credentials_missing:
+                  summary: CPU deploy without GCP credentials
+                  value: { code: credentials_missing, message: "No GCP credentials configured." }
+                gcp_credentials_invalid:
+                  summary: CPU deploy with invalid GCP credentials
+                  value: { code: credentials_invalid, message: "Your stored GCP credentials are invalid." }
+                lightning_credentials_missing:
+                  summary: GPU deploy without Lightning AI key
+                  value: { code: lightning_credentials_missing, message: "No Lightning AI API key configured. Add it in the ⚡ Lightning AI tab." }
+                lightning_credentials_invalid:
+                  summary: GPU deploy with invalid Lightning AI key
+                  value: { code: lightning_credentials_invalid, message: "Your Lightning AI API key is invalid. Update it in the ⚡ Lightning AI tab." }
+                concurrent_limit:
+                  value: { code: concurrent_deployment_limit, message: "You already have 3 active deployments (limit is 3). Delete one first." }
+                duplicate_model:
+                  value: { code: duplicate_model_requires_confirmation, message: "You already have a deployment of this model.", require_confirmation: true }
+
+    get:
+      summary: List all non-deleted deployments for current user
+      operationId: listDeployments
+      security: [{ PlatformSession: [] }]
+      tags: [deployments]
+      responses:
+        '200':
+          description: Array of deployment records (CPU and GPU mixed)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Deployment'
+        '401':
+          description: Not authenticated
+
+  /api/deployments/{deployment_id}:
+    get:
+      summary: Get deployment detail (includes hardware-specific fields)
+      operationId: getDeployment
+      security: [{ PlatformSession: [] }]
+      tags: [deployments]
+      parameters:
+        - name: deployment_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Deployment detail (CPU fields or GPU fields populated based on hardware_type)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentDetail'
+        '401':
+          description: Not authenticated
+        '404':
+          description: Deployment not found or does not belong to current user
+
+    delete:
+      summary: Delete a deployment (tears down GKE project for CPU; calls Lightning AI SDK for GPU)
+      operationId: deleteDeployment
+      security: [{ PlatformSession: [] }]
+      tags: [deployments]
+      parameters:
+        - name: deployment_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '202':
+          description: Deletion initiated; returns updated deployment record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '401':
+          description: Not authenticated
+        '404':
+          description: Deployment not found
+        '409':
+          description: Credentials invalid — cannot initiate teardown
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
