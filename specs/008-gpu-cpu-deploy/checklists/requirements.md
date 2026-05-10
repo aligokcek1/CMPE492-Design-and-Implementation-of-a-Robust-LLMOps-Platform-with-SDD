@@ -1,7 +1,8 @@
 # Specification Quality Checklist: GPU / CPU Hardware Selector for Public Model Deployment
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
-**Created**: 2026-05-10
+**Created**: 2026-05-10  
+**Last updated**: 2026-05-10 (revised: GPU path changed to Lightning AI managed cloud)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -32,5 +33,7 @@
 ## Notes
 
 - All items pass. Spec is ready to proceed to `/speckit-plan`.
-- FR-005 explicitly calls out that `vllm_manifest.py` must NOT be renamed, preserving the user's constraint about not making major edits to the CPU path.
-- The assumption section clarifies that LitServe lives inside the container image (not as a backend Python dependency), keeping the spec technology-agnostic while capturing the architectural intent.
+- **Revision note**: GPU path changed from GKE Autopilot to Lightning AI managed cloud (https://lightning.ai/deploy). GCP credentials are NOT required for GPU deploys; a Lightning AI API key is required instead (FR-007, FR-013).
+- FR-005 explicitly protects `vllm_manifest.py` from renaming — the legacy name is retained as accepted tech debt.
+- The two deployment paths (CPU → GKE, GPU → Lightning AI) are architecturally independent; the shared deployment record unifies them via `hardware_type`.
+- SC-005 and FR-013 together ensure the GPU path is fully contract-testable without real Lightning AI or GCP calls.
