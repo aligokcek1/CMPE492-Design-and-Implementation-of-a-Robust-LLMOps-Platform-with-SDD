@@ -103,6 +103,31 @@ class DeploymentRow(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+MONITORING_STATUSES = ("active", "decommissioning")
+
+
+class DeploymentMonitoringRow(Base):
+    __tablename__ = "deployment_monitoring"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN {MONITORING_STATUSES}",
+            name="ck_deployment_monitoring_status",
+        ),
+        Index("ix_deployment_monitoring_user_id", "user_id"),
+    )
+
+    deployment_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    prometheus_scrape_job: Mapped[str] = mapped_column(String, nullable=False)
+    grafana_datasource_uid: Mapped[str] = mapped_column(String, nullable=False)
+    grafana_dashboard_uid: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active")
+    provisioned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    decommission_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+
 class LightningAICredentialsRow(Base):
     __tablename__ = "lightning_ai_credentials"
     __table_args__ = (
@@ -129,9 +154,11 @@ class LightningAICredentialsRow(Base):
 __all__ = [
     "GCPCredentialsRow",
     "DeploymentRow",
+    "DeploymentMonitoringRow",
     "LightningAICredentialsRow",
     "VALIDATION_STATUSES",
     "HARDWARE_TYPES",
     "DEPLOYMENT_STATUSES",
     "MODEL_ORIGINS",
+    "MONITORING_STATUSES",
 ]

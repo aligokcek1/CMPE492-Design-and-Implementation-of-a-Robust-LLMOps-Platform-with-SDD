@@ -222,6 +222,16 @@ class DeploymentStore:
                 db.expunge(row)
             return rows
 
+    def list_by_status(self, status: str) -> list[DeploymentRow]:
+        session_factory = get_session_factory()
+        with session_factory() as db:
+            rows = list(
+                db.execute(select(DeploymentRow).where(DeploymentRow.status == status)).scalars().all()
+            )
+            for row in rows:
+                db.expunge(row)
+            return rows
+
     def hard_delete(self, deployment_id: str) -> None:
         session_factory = get_session_factory()
         with session_factory() as db:

@@ -16,7 +16,8 @@ Auto-generated from all feature plans. Last updated: 2026-05-24
 - `HF_TOKEN` injected as a transient env var into every deployment environment (GKE pod + Lightning AI job) at launch time — never persisted in DB, logs, or API responses. (009-local-model-hf-deploy)
 - `model_origin` field on `DeploymentRow` (`"uploaded"` | `"public"`) determined at deploy time by comparing the `hf_model_id` owner segment to the authenticated HF username. (009-local-model-hf-deploy)
 - Upload size: 10 GB per file (Streamlit `maxUploadSize` in `frontend/.streamlit/config.toml`); backend total limit configurable via `LLMOPS_MAX_UPLOAD_BYTES` env var, defaulting to 50 GB (set to 0 to disable). (009-local-model-hf-deploy)
-- SQLite at `backend/data/llmops.db` — new `deployment_monitoring` table tracks scrape job name, Grafana datasource UID, dashboard UID, provision status, and decommission schedule. Time-series data lives in Prometheus (not SQLite). (010-prometheus-grafana-monitoring)
+- SQLite at `backend/data/llmops.db` — `deployment_monitoring` table tracks scrape job name, Grafana datasource/dashboard UIDs, provision status, and decommission schedule. Time-series data lives in Prometheus (30d retention). (010-prometheus-grafana-monitoring)
+- `prometheus-client` for proxy metrics at `GET /metrics`; Prometheus + Grafana via `docker-compose.monitoring.yml`. HMAC-signed Grafana deep links (`LLMOPS_GRAFANA_SIGNING_SECRET`). Set `LLMOPS_METRICS_DISABLED=1` in tests. (010-prometheus-grafana-monitoring)
 
 ## Project Structure
 
@@ -33,6 +34,7 @@ backend/
 │   │   ├── errors.py                        # Global error handler
 │   │   ├── gcp_credentials.py               # GET/POST/DELETE /api/gcp/credentials
 │   │   ├── lightning_ai_credentials.py      # GET/POST/DELETE /api/lightning/credentials (008)
+│   │   ├── metrics.py                       # GET /api/deployments/{id}/metrics, /metrics/grafana, /metrics/grafana/redirect (010)
 │   │   ├── models.py                        # GET /api/models, GET /api/models/public
 │   │   └── upload.py                        # POST /api/upload/start; returns deploy_shortcut in response
 │   ├── models/
@@ -40,9 +42,10 @@ backend/
 │   │   ├── deployment.py                    # DeployRequest(hardware_type), Deployment(model_origin), DeploymentDetail
 │   │   ├── gcp_credentials.py
 │   │   ├── lightning_ai_credentials.py      # LightningAICredentialRequest/Status (008)
+│   │   ├── metrics.py                       # DeploymentMetricsResponse, GrafanaLinkResponse, MetricsRange (010)
 │   │   └── upload.py                        # UploadStartResponse includes deploy_shortcut: str | None
 │   ├── db/
-│   │   ├── models.py                        # GCPCredentialsRow, LightningAICredentialsRow, DeploymentRow(model_origin)
+│   │   ├── models.py                        # GCPCredentialsRow, DeploymentRow, DeploymentMonitoringRow, LightningAICredentialsRow
 │   │   └── migrations.py                    # ensure_schema() — structural + additive migrations
 │   └── services/
 │       ├── credentials_store.py             # GCP credential CRUD + Fernet encrypt/decrypt
@@ -58,7 +61,16 @@ backend/
 │       ├── hf_models.py                     # is_supported_text_generation_model(id, *, hf_token, timeout=10);
 │       │                                    # authenticated HfApi; maps timeout → "unreachable"; maps 403 → "access_denied"
 │       ├── huggingface.py
-│       ├── inference_proxy.py
+│       ├── inference_proxy.py               # Records TTFT/tokens/requests via metrics_recorder (010)
+│       ├── metrics_recorder.py            # llmops_ttft_seconds, llmops_tokens_total counters (010)
+│       ├── metrics_query.py                 # PromQL query service with label injection (010)
+│       ├── metrics_store.py               # deployment_monitoring CRUD (010)
+│       ├── monitoring_orchestrator.py       # Provision/decommission scrape jobs + Grafana (010)
+│       ├── prometheus_provisioner.py        # File-based scrape job writer (010)
+│       ├── prometheus_fake_provisioner.py   # Test fake (010)
+│       ├── grafana_provisioner.py           # Grafana HTTP API provisioner (010)
+│       ├── grafana_fake_provisioner.py      # Test fake (010)
+│       ├── grafana_signed_url.py            # HMAC signed Grafana redirects (010)
 │       ├── kube_client.py
 │       ├── mock_gcp.py
 │       ├── session_store.py
@@ -67,7 +79,8 @@ backend/
 └── tests/contract/
     ├── conftest.py                          # FakeGCPProvider + FakeLightningAIProvider fixtures
     ├── test_auth_api.py
-    ├── test_deployment_api.py               # CPU + GPU deploy/delete/inference + model_origin + HF_TOKEN security tests
+    ├── test_deployment_api.py               # CPU + GPU deploy/delete/inference + metrics recording (010)
+    ├── test_metrics_api.py                  # Metrics API + Grafana signed redirect contract tests (010)
     ├── test_lightning_ai_credentials_api.py # Lightning AI credential CRUD tests (008)
     ├── test_models_api.py
     └── test_upload_api.py                   # Includes deploy_shortcut response field tests
@@ -87,7 +100,8 @@ frontend/
 │   │   │                                    # field renamed "Model Repository ID" (supports private + gated repos)
 │   │   ├── gcp_credentials.py
 │   │   ├── lightning_ai_credentials.py      # ⚡ Lightning AI tab component (008)
-│   │   ├── deployments_list.py              # Shows "📤 My Upload" badge for model_origin="uploaded" rows
+│   │   ├── deployments_list.py              # Running deployments: inference + 📈 Metrics panel (010)
+│   │   ├── deployment_metrics.py            # Native Streamlit TTFT/throughput/hardware charts (010)
 │   │   └── upload.py                        # Sets shortcut_deploy_model in session_state after upload;
 │   │                                        # "Use Selected Model" also sets shortcut_deploy_model;
 │   │                                        # "My Uploads" section header; no frontend size check
@@ -107,6 +121,9 @@ cd backend && ruff check .      # Lint backend
 cd frontend && ruff check .     # Lint frontend
 cd backend && uvicorn src.main:app --reload   # Run backend dev server
 cd frontend && streamlit run src/app.py       # Run frontend dev server
+
+# Monitoring stack (Prometheus :9090, Grafana :3000)
+docker compose -f docker-compose.monitoring.yml up -d
 
 # Override upload size limit (bytes); 0 = unlimited
 LLMOPS_MAX_UPLOAD_BYTES=0 uvicorn src.main:app --reload
@@ -131,7 +148,7 @@ Python 3.11: Follow standard conventions. Ruff for linting.
 - **No mock-deploy UI**: The legacy `render_deployment_section()` and `mock_deploy` client call are removed from the frontend. The Deploy to Cloud tab contains only the real GKE + Lightning AI path.
 
 ## Recent Changes
-- 010-prometheus-grafana-monitoring: Added Python 3.11 (backend + frontend)
+- 010-prometheus-grafana-monitoring: Per-deployment Prometheus scrape jobs + Grafana dashboards. Proxy metrics (TTFT, throughput, request outcomes) at `GET /metrics`. Metrics API + HMAC-signed Grafana deep links. Streamlit hybrid UX (native charts + Open in Grafana). `deployment_monitoring` table. GPU hardware N/A when series absent. Post-delete UI hides metrics; 7-day operator retention.
 - 009-local-model-hf-deploy: Cloud deployment of user-uploaded HF models. Universal HF_TOKEN injection (CPU + GPU). `model_origin` field on deployments. Upload-to-deploy shortcut. "My Upload" badge in Deployments list. Pipeline-tag bypass for user-owned models. Pre-deploy timeout/auth error codes. Upload size raised (10 GB/file Streamlit, 50 GB backend default). Legacy mock-deploy section removed; "Model Repository ID" field (private + gated supported). "Use Selected Model" pre-populates Deploy tab.
 - 008-gpu-cpu-deploy: Added GPU/CPU hardware selector for public model deployment. GPU path uses Lightning AI managed cloud (LitServe+vLLM); CPU path unchanged (GKE Autopilot + TGI-CPU). New ⚡ Lightning AI credentials tab. `deployments` table extended with `hardware_type` and `lightning_ai_deployment_id`; GKE columns made nullable.
 

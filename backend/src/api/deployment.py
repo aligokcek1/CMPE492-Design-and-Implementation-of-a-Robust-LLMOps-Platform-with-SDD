@@ -374,6 +374,8 @@ async def deployment_inference(
             body=body,
             hardware_type=row.hardware_type,
             model_id=row.hf_model_id,
+            deployment_id=deployment_id,
+            user_id=session.username,
         )
     except httpx.ReadTimeout as exc:
         raise HTTPException(

@@ -17,11 +17,11 @@
 
 **Purpose**: Monitoring stack assets and new backend dependency.
 
-- [ ] T001 Add `prometheus-client` to backend dependencies in `backend/pyproject.toml` (or equivalent deps file used by the project)
-- [ ] T002 [P] Create `docker-compose.monitoring.yml` at repo root with Prometheus (`9090`) and Grafana (`3000`) services; configure Prometheus with `--storage.tsdb.retention.time=30d` and `--web.enable-lifecycle` per `specs/010-prometheus-grafana-monitoring/quickstart.md` and Assumptions (30-day active retention)
-- [ ] T003 [P] Create base Prometheus config at `backend/monitoring/prometheus.yml` with `scrape_config_files: ['scrape.d/*.yml']`, global `scrape_interval: 15s` (SC-002 freshness target), and backend self-scrape job for `GET /metrics`
-- [ ] T004 [P] Create `backend/monitoring/scrape.d/.gitkeep` directory for per-deployment scrape job fragments
-- [ ] T005 [P] Create Grafana dashboard template at `backend/monitoring/grafana/dashboards/deployment-metrics.json` with panels for TTFT, throughput, CPU/memory, and GPU (N/A-safe)
+- [x] T001 Add `prometheus-client` to backend dependencies in `backend/pyproject.toml` (or equivalent deps file used by the project)
+- [x] T002 [P] Create `docker-compose.monitoring.yml` at repo root with Prometheus (`9090`) and Grafana (`3000`) services; configure Prometheus with `--storage.tsdb.retention.time=30d` and `--web.enable-lifecycle` per `specs/010-prometheus-grafana-monitoring/quickstart.md` and Assumptions (30-day active retention)
+- [x] T003 [P] Create base Prometheus config at `backend/monitoring/prometheus.yml` with `scrape_config_files: ['scrape.d/*.yml']`, global `scrape_interval: 15s` (SC-002 freshness target), and backend self-scrape job for `GET /metrics`
+- [x] T004 [P] Create `backend/monitoring/scrape.d/.gitkeep` directory for per-deployment scrape job fragments
+- [x] T005 [P] Create Grafana dashboard template at `backend/monitoring/grafana/dashboards/deployment-metrics.json` with panels for TTFT, throughput, CPU/memory, and GPU (N/A-safe)
 
 ---
 
@@ -31,23 +31,23 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T006 Add `DeploymentMonitoringRow` SQLAlchemy model to `backend/src/db/models.py` per `specs/010-prometheus-grafana-monitoring/data-model.md`
-- [ ] T007 Write additive migration for `deployment_monitoring` table in `backend/src/db/migrations.py` (gate on table absence via inspector)
-- [ ] T008 [P] Create Pydantic models (`MetricPoint`, `HardwareSeries`, `MetricsSummary`, `MetricsSeriesBundle`, `DeploymentMetricsResponse`, `GrafanaLinkResponse`) in `backend/src/models/metrics.py`
-- [ ] T009 [P] Implement `metrics_recorder.py` with `llmops_ttft_seconds`, `llmops_tokens_total`, and `llmops_inference_requests_total` in `backend/src/services/metrics_recorder.py`
-- [ ] T010 Instrument `inference_proxy.forward()` to record TTFT, token counts, and request outcomes via `metrics_recorder`; extend `forward()` signature to accept `deployment_id` and `user_id` labels; update `backend/src/api/deployment.py` inference handler to pass `deployment_id`, `session.username`, and `row.hardware_type` into `metrics_recorder` on every inference request
-- [ ] T011 [P] Implement `PrometheusProvisioner` protocol + file-based scrape job writer/reloader in `backend/src/services/prometheus_provisioner.py`
-- [ ] T012 [P] Implement `FakePrometheusProvisioner` (records provision/decommission calls, no filesystem writes) in `backend/src/services/prometheus_fake_provisioner.py`
-- [ ] T013 [P] Implement `GrafanaProvisioner` protocol + Grafana HTTP API client (datasource + dashboard import) in `backend/src/services/grafana_provisioner.py`
-- [ ] T014 [P] Implement `FakeGrafanaProvisioner` (returns deterministic UIDs) in `backend/src/services/grafana_fake_provisioner.py`
-- [ ] T015 [P] Implement `GrafanaSignedUrlService` (HMAC mint + validate using `LLMOPS_GRAFANA_SIGNING_SECRET`) in `backend/src/services/grafana_signed_url.py`
-- [ ] T016 Implement `MetricsStore` CRUD (`create_active`, `get_for_deployment`, `mark_decommissioning`, `list_due_for_decommission`, `delete`) in `backend/src/services/metrics_store.py`
-- [ ] T017 Implement `MonitoringOrchestrator` (`provision_for_running_deployment`, `schedule_decommission`, `run_decommission_cycle`, `reconcile_on_startup`) in `backend/src/services/monitoring_orchestrator.py`
-- [ ] T018 Hook `MonitoringOrchestrator` into `deployment_orchestrator` when status transitions to `running` (provision) and `deleted` (schedule decommission) in `backend/src/services/deployment_orchestrator.py`
-- [ ] T019 Mount backend Prometheus exposition at `GET /metrics` via `prometheus_client.make_asgi_app()` and register empty `metrics` router in `backend/src/main.py`
-- [ ] T020 [P] Add `FakePrometheusProvisioner`, `FakeGrafanaProvisioner`, and `FakeMetricsQueryClient` fixtures to `backend/tests/contract/conftest.py`
-- [ ] T021 [P] Add `get_prometheus_provisioner`, `get_grafana_provisioner`, and test-reset overrides to `backend/src/api/dependencies.py`
-- [ ] T022 Implement `MetricsQueryService.fetch_deployment_metrics()` with server-side PromQL label injection (`deployment_id`, `user_id`) in `backend/src/services/metrics_query.py`
+- [x] T006 Add `DeploymentMonitoringRow` SQLAlchemy model to `backend/src/db/models.py` per `specs/010-prometheus-grafana-monitoring/data-model.md`
+- [x] T007 Write additive migration for `deployment_monitoring` table in `backend/src/db/migrations.py` (gate on table absence via inspector)
+- [x] T008 [P] Create Pydantic models (`MetricPoint`, `HardwareSeries`, `MetricsSummary`, `MetricsSeriesBundle`, `DeploymentMetricsResponse`, `GrafanaLinkResponse`) in `backend/src/models/metrics.py`
+- [x] T009 [P] Implement `metrics_recorder.py` with `llmops_ttft_seconds`, `llmops_tokens_total`, and `llmops_inference_requests_total` in `backend/src/services/metrics_recorder.py`
+- [x] T010 Instrument `inference_proxy.forward()` to record TTFT, token counts, and request outcomes via `metrics_recorder`; extend `forward()` signature to accept `deployment_id` and `user_id` labels; update `backend/src/api/deployment.py` inference handler to pass `deployment_id`, `session.username`, and `row.hardware_type` into `metrics_recorder` on every inference request
+- [x] T011 [P] Implement `PrometheusProvisioner` protocol + file-based scrape job writer/reloader in `backend/src/services/prometheus_provisioner.py`
+- [x] T012 [P] Implement `FakePrometheusProvisioner` (records provision/decommission calls, no filesystem writes) in `backend/src/services/prometheus_fake_provisioner.py`
+- [x] T013 [P] Implement `GrafanaProvisioner` protocol + Grafana HTTP API client (datasource + dashboard import) in `backend/src/services/grafana_provisioner.py`
+- [x] T014 [P] Implement `FakeGrafanaProvisioner` (returns deterministic UIDs) in `backend/src/services/grafana_fake_provisioner.py`
+- [x] T015 [P] Implement `GrafanaSignedUrlService` (HMAC mint + validate using `LLMOPS_GRAFANA_SIGNING_SECRET`) in `backend/src/services/grafana_signed_url.py`
+- [x] T016 Implement `MetricsStore` CRUD (`create_active`, `get_for_deployment`, `mark_decommissioning`, `list_due_for_decommission`, `delete`) in `backend/src/services/metrics_store.py`
+- [x] T017 Implement `MonitoringOrchestrator` (`provision_for_running_deployment`, `schedule_decommission`, `run_decommission_cycle`, `reconcile_on_startup`) in `backend/src/services/monitoring_orchestrator.py`
+- [x] T018 Hook `MonitoringOrchestrator` into `deployment_orchestrator` when status transitions to `running` (provision) and `deleted` (schedule decommission) in `backend/src/services/deployment_orchestrator.py`
+- [x] T019 Mount backend Prometheus exposition at `GET /metrics` via `prometheus_client.make_asgi_app()` and register empty `metrics` router in `backend/src/main.py`
+- [x] T020 [P] Add `FakePrometheusProvisioner`, `FakeGrafanaProvisioner`, and `FakeMetricsQueryClient` fixtures to `backend/tests/contract/conftest.py`
+- [x] T021 [P] Add `get_prometheus_provisioner`, `get_grafana_provisioner`, and test-reset overrides to `backend/src/api/dependencies.py`
+- [x] T022 Implement `MetricsQueryService.fetch_deployment_metrics()` with server-side PromQL label injection (`deployment_id`, `user_id`) in `backend/src/services/metrics_query.py`
 
 **Checkpoint**: Foundation ready — proxy metrics emit, monitoring rows can be provisioned/decommissioned, query service stub exists.
 
@@ -61,17 +61,17 @@
 
 ### Tests for User Story 1 (write FIRST — verify red before implementing)
 
-- [ ] T023 [P] [US1] Write contract tests in `backend/tests/contract/test_metrics_api.py`: (a) `GET /api/deployments/{id}/metrics` on running deployment with active `deployment_monitoring` row returns 200 with TTFT + throughput summary fields; (b) no inference traffic returns `empty: true`; (c) non-running/deleted deployment returns 404; (d) foreign user's deployment returns 403; (e) Prometheus unreachable returns explicit error (503 or 200 with `error` field); (f) running deployment without provisioned monitoring row returns 503 with clear message (FR-004a)
-- [ ] T024 [P] [US1] Add frontend AppTest cases to `frontend/tests/integration/test_workflow.py`: metrics expander visible on `running` deployment; metrics expander absent on `deleted`/`deploying` deployment
+- [x] T023 [P] [US1] Write contract tests in `backend/tests/contract/test_metrics_api.py`: (a) `GET /api/deployments/{id}/metrics` on running deployment with active `deployment_monitoring` row returns 200 with TTFT + throughput summary fields; (b) no inference traffic returns `empty: true`; (c) non-running/deleted deployment returns 404; (d) foreign user's deployment returns 403; (e) Prometheus unreachable returns explicit error (503 or 200 with `error` field); (f) running deployment without provisioned monitoring row returns 503 with clear message (FR-004a)
+- [x] T024 [P] [US1] Add frontend AppTest cases to `frontend/tests/integration/test_workflow.py`: metrics expander visible on `running` deployment; metrics expander absent on `deleted`/`deploying` deployment
 
 ### Implementation for User Story 1
 
-- [ ] T025 [US1] Implement `GET /api/deployments/{deployment_id}/metrics` (auth + ownership + running-only guard + active `deployment_monitoring` row required per FR-004a) in `backend/src/api/metrics.py`
-- [ ] T026 [US1] Implement summary PromQL queries (avg TTFT, throughput with tokens/s vs requests/s fallback) in `backend/src/services/metrics_query.py`
-- [ ] T027 [P] [US1] Add `get_deployment_metrics(token, deployment_id, range)` to `frontend/src/services/api_client.py`
-- [ ] T028 [US1] Create `render_deployment_metrics_panel()` with summary `st.metric` widgets, empty state, and error state in `frontend/src/components/deployment_metrics.py`
-- [ ] T029 [US1] Embed metrics panel for `status == "running"` deployments only in `frontend/src/components/deployments_list.py`
-- [ ] T030 [US1] Backend checkpoint — run `cd backend && pytest tests/contract/test_metrics_api.py` and verify all US1 tests pass (green)
+- [x] T025 [US1] Implement `GET /api/deployments/{deployment_id}/metrics` (auth + ownership + running-only guard + active `deployment_monitoring` row required per FR-004a) in `backend/src/api/metrics.py`
+- [x] T026 [US1] Implement summary PromQL queries (avg TTFT, throughput with tokens/s vs requests/s fallback) in `backend/src/services/metrics_query.py`
+- [x] T027 [P] [US1] Add `get_deployment_metrics(token, deployment_id, range)` to `frontend/src/services/api_client.py`
+- [x] T028 [US1] Create `render_deployment_metrics_panel()` with summary `st.metric` widgets, empty state, and error state in `frontend/src/components/deployment_metrics.py`
+- [x] T029 [US1] Embed metrics panel for `status == "running"` deployments only in `frontend/src/components/deployments_list.py`
+- [x] T030 [US1] Backend checkpoint — run `cd backend && pytest tests/contract/test_metrics_api.py` and verify all US1 tests pass (green)
 
 **Checkpoint**: MVP metrics panel live for running deployments — TTFT + throughput summaries with empty/error/provisioning states.
 
@@ -85,15 +85,15 @@
 
 ### Tests for User Story 2 (write FIRST — verify red before implementing)
 
-- [ ] T031 [P] [US2] Extend `backend/tests/contract/test_metrics_api.py`: (a) `range=1h|24h|7d` returns time-series arrays; (b) summary includes `ttft_p95_seconds`; (c) `failed_requests_excluded: true` present when failed requests occurred
-- [ ] T032 [P] [US2] Add frontend AppTest to `frontend/tests/integration/test_workflow.py`: time range selector changes displayed chart data (mock API returns distinct series per range)
+- [x] T031 [P] [US2] Extend `backend/tests/contract/test_metrics_api.py`: (a) `range=1h|24h|7d` returns time-series arrays; (b) summary includes `ttft_p95_seconds`; (c) `failed_requests_excluded: true` present when failed requests occurred
+- [x] T032 [P] [US2] Add frontend AppTest to `frontend/tests/integration/test_workflow.py`: time range selector changes displayed chart data (mock API returns distinct series per range)
 
 ### Implementation for User Story 2
 
-- [ ] T033 [US2] Extend `MetricsQueryService` with `/api/v1/query_range` PromQL for TTFT and throughput trends in `backend/src/services/metrics_query.py`
-- [ ] T034 [US2] Add `range` query param validation and p95 TTFT aggregation to `GET /api/deployments/{id}/metrics` in `backend/src/api/metrics.py`
-- [ ] T035 [US2] Add time range `st.selectbox` and `st.line_chart` trend charts for TTFT and throughput in `frontend/src/components/deployment_metrics.py`
-- [ ] T036 [US2] Display failed-request exclusion note in metrics panel when applicable in `frontend/src/components/deployment_metrics.py`
+- [x] T033 [US2] Extend `MetricsQueryService` with `/api/v1/query_range` PromQL for TTFT and throughput trends in `backend/src/services/metrics_query.py`
+- [x] T034 [US2] Add `range` query param validation and p95 TTFT aggregation to `GET /api/deployments/{id}/metrics` in `backend/src/api/metrics.py`
+- [x] T035 [US2] Add time range `st.selectbox` and `st.line_chart` trend charts for TTFT and throughput in `frontend/src/components/deployment_metrics.py`
+- [x] T036 [US2] Display failed-request exclusion note in metrics panel when applicable in `frontend/src/components/deployment_metrics.py`
 
 **Checkpoint**: Trend analysis available in-platform for all three time ranges.
 
@@ -107,15 +107,15 @@
 
 ### Tests for User Story 3 (write FIRST — verify red before implementing)
 
-- [ ] T037 [P] [US3] Extend `backend/tests/contract/test_metrics_api.py`: (a) CPU deployment returns `cpu_utilization.available=true` and `gpu_utilization.available=false`; (b) GPU deployment with no GPU series returns `gpu_utilization.available=false` with reason `not_available_for_this_deployment_type`; (c) TTFT/throughput still populated for GPU N/A case
-- [ ] T038 [P] [US3] Add frontend AppTest to `frontend/tests/integration/test_workflow.py`: CPU panel shows "GKE / TGI" label; GPU panel shows "Lightning AI" label; GPU N/A renders explicit message not blank chart
+- [x] T037 [P] [US3] Extend `backend/tests/contract/test_metrics_api.py`: (a) CPU deployment returns `cpu_utilization.available=true` and `gpu_utilization.available=false`; (b) GPU deployment with no GPU series returns `gpu_utilization.available=false` with reason `not_available_for_this_deployment_type`; (c) TTFT/throughput still populated for GPU N/A case
+- [x] T038 [P] [US3] Add frontend AppTest to `frontend/tests/integration/test_workflow.py`: CPU panel shows "GKE / TGI" label; GPU panel shows "Lightning AI" label; GPU N/A renders explicit message not blank chart
 
 ### Implementation for User Story 3
 
-- [ ] T039 [US3] Add hardware PromQL queries (`process_cpu_seconds_total`, `process_resident_memory_bytes`, GPU series probe) with `available`/`reason` flags in `backend/src/services/metrics_query.py`
-- [ ] T040 [US3] Include `platform_label` (`GKE / TGI` vs `Lightning AI / GPU`) and hardware bundle in API response in `backend/src/api/metrics.py`
-- [ ] T041 [US3] Render hardware utilization charts with CPU/GPU-specific labels and N/A messaging in `frontend/src/components/deployment_metrics.py`
-- [ ] T042 [US3] Ensure per-deployment isolation — metrics query always filters by `deployment_id` + `user_id` with no cross-deployment aggregation in `backend/src/services/metrics_query.py`
+- [x] T039 [US3] Add hardware PromQL queries (`process_cpu_seconds_total`, `process_resident_memory_bytes`, GPU series probe) with `available`/`reason` flags in `backend/src/services/metrics_query.py`
+- [x] T040 [US3] Include `platform_label` (`GKE / TGI` vs `Lightning AI / GPU`) and hardware bundle in API response in `backend/src/api/metrics.py`
+- [x] T041 [US3] Render hardware utilization charts with CPU/GPU-specific labels and N/A messaging in `frontend/src/components/deployment_metrics.py`
+- [x] T042 [US3] Ensure per-deployment isolation — metrics query always filters by `deployment_id` + `user_id` with no cross-deployment aggregation in `backend/src/services/metrics_query.py`
 
 **Checkpoint**: Hardware panels correctly differentiated by deployment type with honest GPU fallback.
 
@@ -129,16 +129,16 @@
 
 ### Tests for User Story 4 (write FIRST — verify red before implementing)
 
-- [ ] T043 [P] [US4] Write contract tests in `backend/tests/contract/test_metrics_api.py`: (a) `GET /api/deployments/{id}/metrics/grafana` returns `redirect_url` + `expires_at` for running deployment; (b) deleted/non-running returns 404; (c) foreign user returns 403; (d) `GET /api/metrics/grafana/redirect?token=` valid token 302s to Grafana URL; (e) expired/tampered token returns 403
-- [ ] T044 [P] [US4] Add frontend AppTest to `frontend/tests/integration/test_workflow.py`: **Open in Grafana** button visible on running deployment only; clicking calls API and opens returned URL
+- [x] T043 [P] [US4] Write contract tests in `backend/tests/contract/test_metrics_api.py`: (a) `GET /api/deployments/{id}/metrics/grafana` returns `redirect_url` + `expires_at` for running deployment; (b) deleted/non-running returns 404; (c) foreign user returns 403; (d) `GET /api/metrics/grafana/redirect?token=` valid token 302s to Grafana URL; (e) expired/tampered token returns 403
+- [x] T044 [P] [US4] Add frontend AppTest to `frontend/tests/integration/test_workflow.py`: **Open in Grafana** button visible on running deployment only; clicking calls API and opens returned URL
 
 ### Implementation for User Story 4
 
-- [ ] T045 [US4] Implement `GET /api/deployments/{deployment_id}/metrics/grafana` (mint signed redirect URL) in `backend/src/api/metrics.py`
-- [ ] T046 [US4] Implement `GET /api/metrics/grafana/redirect` (validate HMAC token → 302 to `{GRAFANA_URL}/d/{dashboard_uid}`) in `backend/src/api/metrics.py`
-- [ ] T047 [US4] Wire `GrafanaProvisioner` to import per-deployment dashboard from `backend/monitoring/grafana/dashboards/deployment-metrics.json` during provision in `backend/src/services/monitoring_orchestrator.py`
-- [ ] T048 [P] [US4] Add `get_grafana_link(token, deployment_id)` to `frontend/src/services/api_client.py`
-- [ ] T049 [US4] Add **Open in Grafana** button (opens signed redirect in new tab) to `frontend/src/components/deployment_metrics.py`; hide when deployment not `running`
+- [x] T045 [US4] Implement `GET /api/deployments/{deployment_id}/metrics/grafana` (mint signed redirect URL) in `backend/src/api/metrics.py`
+- [x] T046 [US4] Implement `GET /api/metrics/grafana/redirect` (validate HMAC token → 302 to `{GRAFANA_URL}/d/{dashboard_uid}`) in `backend/src/api/metrics.py`
+- [x] T047 [US4] Wire `GrafanaProvisioner` to import per-deployment dashboard from `backend/monitoring/grafana/dashboards/deployment-metrics.json` during provision in `backend/src/services/monitoring_orchestrator.py`
+- [x] T048 [P] [US4] Add `get_grafana_link(token, deployment_id)` to `frontend/src/services/api_client.py`
+- [x] T049 [US4] Add **Open in Grafana** button (opens signed redirect in new tab) to `frontend/src/components/deployment_metrics.py`; hide when deployment not `running`
 
 **Checkpoint**: Hybrid UX complete — in-platform charts plus signed Grafana deep links.
 
@@ -148,11 +148,11 @@
 
 **Purpose**: Lifecycle hardening, background jobs, and end-to-end validation.
 
-- [ ] T050 Start 60 s background decommission loop calling `MonitoringOrchestrator.run_decommission_cycle()` in `backend/src/main.py` lifespan (respect `LLMOPS_METRICS_DISABLED=1`)
-- [ ] T051 Call `MonitoringOrchestrator.reconcile_on_startup()` on backend startup to restore scrape jobs for existing `running` deployments in `backend/src/main.py`
-- [ ] T052 [P] Add inference-records-metrics contract test to `backend/tests/contract/test_deployment_api.py`: POST inference on running deployment increments observable metric sample (via fake query client or `/metrics` exposition parse)
-- [ ] T053 [P] Update `.cursor/rules/specify-rules.mdc` project structure section with new monitoring modules and API routes from feature 010
-- [ ] T054 Run full validation per `specs/010-prometheus-grafana-monitoring/quickstart.md`: `docker compose -f docker-compose.monitoring.yml up -d`, deploy model, verify metrics panel + Grafana link E2E
+- [x] T050 Start 60 s background decommission loop calling `MonitoringOrchestrator.run_decommission_cycle()` in `backend/src/main.py` lifespan (respect `LLMOPS_METRICS_DISABLED=1`)
+- [x] T051 Call `MonitoringOrchestrator.reconcile_on_startup()` on backend startup to restore scrape jobs for existing `running` deployments in `backend/src/main.py`
+- [x] T052 [P] Add inference-records-metrics contract test to `backend/tests/contract/test_deployment_api.py`: POST inference on running deployment increments observable metric sample (via fake query client or `/metrics` exposition parse)
+- [x] T053 [P] Update `.cursor/rules/specify-rules.mdc` project structure section with new monitoring modules and API routes from feature 010
+- [x] T054 Run full validation per `specs/010-prometheus-grafana-monitoring/quickstart.md`: `docker compose -f docker-compose.monitoring.yml up -d`, deploy model, verify metrics panel + Grafana link E2E
 
 ---
 

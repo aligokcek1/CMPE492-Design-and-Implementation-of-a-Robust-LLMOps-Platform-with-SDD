@@ -361,3 +361,199 @@ def test_expired_session_prompt_and_context_recovery_hint(at):
     at.run()
     assert not at.exception
     assert any("Sign in" in _val(h) for h in at.header)
+
+
+def _running_deployment(**overrides):
+    base = {
+        "id": "dep-metrics-001",
+        "hf_model_id": "org/model",
+        "hf_model_display_name": "Test Model",
+        "hardware_type": "cpu",
+        "model_origin": "public",
+        "status": "running",
+        "status_message": "Running",
+        "endpoint_url": "http://1.2.3.4:80",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_metrics_expander_visible_on_running_deployment(at):
+    at.session_state["session_token"] = "test_session"
+    at.session_state["hf_username"] = "testuser"
+    at.session_state["_session_checked"] = True
+
+    deployments_response = MagicMock(ok=True, json=lambda: [_running_deployment()])
+    metrics_response = MagicMock(
+        ok=True,
+        json=lambda: {
+            "deployment_id": "dep-metrics-001",
+            "hardware_type": "cpu",
+            "platform_label": "GKE / TGI",
+            "range": "1h",
+            "summary": {
+                "ttft_avg_seconds": 0.5,
+                "ttft_p95_seconds": 1.0,
+                "throughput_value": 10.0,
+                "throughput_unit": "tokens_per_second",
+                "failed_requests_excluded": False,
+            },
+            "series": {"ttft": [], "throughput": [], "hardware": {}},
+            "empty": False,
+        },
+    )
+
+    def mock_get(url, **kwargs):
+        if "/metrics/grafana" in url:
+            return MagicMock(
+                ok=True,
+                json=lambda: {"redirect_url": "http://localhost:8000/api/metrics/grafana/redirect?token=abc"},
+            )
+        if "/metrics" in url:
+            return metrics_response
+        return deployments_response
+
+    with patch("src.services.api_client.requests.get", side_effect=mock_get):
+        at.run()
+
+    assert not at.exception
+    expander_labels = [e.label for e in at.expander]
+    assert any("Metrics" in label for label in expander_labels)
+
+
+def test_metrics_expander_absent_on_deleted_deployment(at):
+    at.session_state["session_token"] = "test_session"
+    at.session_state["hf_username"] = "testuser"
+    at.session_state["_session_checked"] = True
+
+    deployments_response = MagicMock(
+        ok=True,
+        json=lambda: [_running_deployment(status="deleted", endpoint_url=None)],
+    )
+    with patch("src.services.api_client.requests.get", return_value=deployments_response):
+        at.run()
+
+    assert not at.exception
+    assert not any("Metrics" in e.label for e in at.expander)
+
+
+def test_metrics_time_range_selector(at):
+    at.session_state["session_token"] = "test_session"
+    at.session_state["hf_username"] = "testuser"
+    at.session_state["_session_checked"] = True
+
+    range_calls: list[str] = []
+
+    def metrics_json():
+        return {
+            "deployment_id": "dep-metrics-001",
+            "hardware_type": "cpu",
+            "platform_label": "GKE / TGI",
+            "range": range_calls[-1] if range_calls else "1h",
+            "summary": {
+                "ttft_avg_seconds": 0.5,
+                "throughput_value": 5.0,
+                "throughput_unit": "tokens_per_second",
+                "failed_requests_excluded": False,
+            },
+            "series": {
+                "ttft": [{"timestamp": "2026-01-01T00:00:00Z", "value": 0.5}],
+                "throughput": [{"timestamp": "2026-01-01T00:00:00Z", "value": 5.0}],
+                "hardware": {},
+            },
+            "empty": False,
+        }
+
+    def mock_get(url, **kwargs):
+        if "/metrics" in url and "grafana" not in url:
+            range_calls.append(kwargs.get("params", {}).get("range", "1h"))
+            return MagicMock(ok=True, json=metrics_json)
+        return MagicMock(ok=True, json=lambda: [_running_deployment()])
+
+    with patch("src.services.api_client.requests.get", side_effect=mock_get):
+        at.run()
+
+    assert not at.exception
+    assert any(s.label == "Time range" for s in at.selectbox)
+
+
+def test_gpu_metrics_shows_lightning_label_and_gpu_na(at):
+    at.session_state["session_token"] = "test_session"
+    at.session_state["hf_username"] = "testuser"
+    at.session_state["_session_checked"] = True
+
+    def mock_get(url, **kwargs):
+        if "/metrics" in url and "grafana" not in url:
+            return MagicMock(
+                ok=True,
+                json=lambda: {
+                    "deployment_id": "dep-gpu-001",
+                    "hardware_type": "gpu",
+                    "platform_label": "Lightning AI / GPU",
+                    "range": "1h",
+                    "summary": {"throughput_unit": "tokens_per_second", "failed_requests_excluded": False},
+                    "series": {
+                        "ttft": [],
+                        "throughput": [],
+                        "hardware": {
+                            "gpu_utilization": {
+                                "available": False,
+                                "reason": "not_available_for_this_deployment_type",
+                                "series": [],
+                            }
+                        },
+                    },
+                    "empty": False,
+                },
+            )
+        return MagicMock(
+            ok=True,
+            json=lambda: [_running_deployment(id="dep-gpu-001", hardware_type="gpu")],
+        )
+
+    with patch("src.services.api_client.requests.get", side_effect=mock_get):
+        at.run()
+
+    assert not at.exception
+    all_text = " ".join(_val(e) for e in list(at.markdown) + list(at.caption))
+    assert "Lightning AI" in all_text or "GPU" in all_text
+
+
+def test_open_in_grafana_button_visible(at):
+    at.session_state["session_token"] = "test_session"
+    at.session_state["hf_username"] = "testuser"
+    at.session_state["_session_checked"] = True
+
+    def mock_get(url, **kwargs):
+        if "/metrics/grafana" in url:
+            return MagicMock(
+                ok=True,
+                json=lambda: {
+                    "redirect_url": "http://localhost:8000/api/metrics/grafana/redirect?token=signed",
+                    "expires_at": "2099-01-01T00:00:00Z",
+                },
+            )
+        if "/metrics" in url:
+            return MagicMock(
+                ok=True,
+                json=lambda: {
+                    "deployment_id": "dep-metrics-001",
+                    "hardware_type": "cpu",
+                    "platform_label": "GKE / TGI",
+                    "range": "1h",
+                    "summary": {"throughput_unit": "tokens_per_second", "failed_requests_excluded": False},
+                    "series": {"ttft": [], "throughput": [], "hardware": {}},
+                    "empty": False,
+                },
+            )
+        return MagicMock(ok=True, json=lambda: [_running_deployment()])
+
+    with patch("src.services.api_client.requests.get", side_effect=mock_get):
+        at.run()
+
+    assert not at.exception
+    button_labels = [b.label for b in at.button]
+    assert any("Open in Grafana" in label for label in button_labels)
+

@@ -9,7 +9,11 @@ the caller so the UI/API contract stays uniform.
 """
 from __future__ import annotations
 
+import time
+
 import httpx
+
+from . import metrics_recorder
 
 INFERENCE_READ_TIMEOUT_SECONDS = 120
 
@@ -36,27 +40,43 @@ async def forward(
     body: dict,
     hardware_type: str = "cpu",
     model_id: str | None = None,
+    deployment_id: str | None = None,
+    user_id: str | None = None,
 ) -> dict:
-    """Forward an OpenAI-style chat payload to the deployed inference endpoint.
+    """Forward an OpenAI-style chat payload to the deployed inference endpoint."""
+    labels = (
+        deployment_id is not None
+        and user_id is not None
+    )
+    started = time.perf_counter()
+    try:
+        if hardware_type == "gpu":
+            result = await _forward_vllm(
+                endpoint_url=endpoint_url, body=body, model_id=model_id or "default"
+            )
+        else:
+            result = await _forward_tgi(endpoint_url=endpoint_url, body=body)
+    except (InferenceProxyError, httpx.ReadTimeout, httpx.RequestError):
+        if labels:
+            metrics_recorder.record_outcome(
+                deployment_id=deployment_id,
+                user_id=user_id,
+                hardware_type=hardware_type,
+                outcome="error",
+            )
+        raise
 
-    Args:
-        endpoint_url: Base URL of the running deployment.
-        body: OpenAI-style request body (``messages``, optional ``max_tokens`` /
-            ``temperature``).
-        hardware_type: ``"cpu"`` routes to TGI ``/generate``; ``"gpu"`` routes
-            to vLLM ``/v1/chat/completions``.
-        model_id: HuggingFace model ID passed as the ``model`` field for vLLM
-            (ignored for CPU/TGI).
-
-    Raises:
-        httpx.ReadTimeout: upstream did not respond within 120 s (SC-008).
-        InferenceProxyError: any other non-2xx upstream response.
-    """
-    if hardware_type == "gpu":
-        return await _forward_vllm(
-            endpoint_url=endpoint_url, body=body, model_id=model_id or "default"
+    ttft_seconds = time.perf_counter() - started
+    if labels:
+        token_count = _count_output_tokens(result)
+        metrics_recorder.record_success(
+            deployment_id=deployment_id,
+            user_id=user_id,
+            hardware_type=hardware_type,
+            ttft_seconds=ttft_seconds,
+            token_count=token_count,
         )
-    return await _forward_tgi(endpoint_url=endpoint_url, body=body)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +155,6 @@ async def _forward_vllm(*, endpoint_url: str, body: dict, model_id: str) -> dict
             status_code=response.status_code,
         )
 
-    # vLLM already returns an OpenAI-format response — pass it straight through.
     return response.json()
 
 
@@ -179,6 +198,20 @@ def _to_openai_chat_response(text: str) -> dict:
             }
         ],
     }
+
+
+def _count_output_tokens(result: dict) -> int:
+    usage = result.get("usage") or {}
+    completion = usage.get("completion_tokens")
+    if isinstance(completion, int) and completion > 0:
+        return completion
+    choices = result.get("choices") or []
+    if not choices:
+        return 0
+    content = choices[0].get("message", {}).get("content", "")
+    if not isinstance(content, str) or not content.strip():
+        return 0
+    return max(1, len(content.split()))
 
 
 __all__ = ["forward", "InferenceProxyError", "INFERENCE_READ_TIMEOUT_SECONDS"]

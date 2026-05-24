@@ -277,3 +277,28 @@ def run_inference(
     )
     _raise_for_status(response)
     return response.json()
+
+
+def get_deployment_metrics(
+    session_token: str,
+    deployment_id: str,
+    metrics_range: str = "1h",
+) -> dict[str, Any]:
+    response = requests.get(
+        f"{BACKEND_URL}/api/deployments/{deployment_id}/metrics",
+        params={"range": metrics_range},
+        headers=_session_headers(session_token),
+        timeout=30,
+    )
+    _raise_for_status(response)
+    return response.json()
+
+
+def get_grafana_link(session_token: str, deployment_id: str) -> dict[str, Any]:
+    response = requests.get(
+        f"{BACKEND_URL}/api/deployments/{deployment_id}/metrics/grafana",
+        headers=_session_headers(session_token),
+        timeout=30,
+    )
+    _raise_for_status(response)
+    return response.json()

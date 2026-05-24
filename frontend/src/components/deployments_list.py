@@ -13,6 +13,7 @@ from src.services.api_client import (
     run_inference,
 )
 from src.services.session_client import get_session_token
+from src.components.deployment_metrics import render_deployment_metrics_panel
 
 
 _STATUS_BADGES = {
@@ -158,6 +159,7 @@ def _render_single_deployment(dep: dict[str, Any]) -> None:
                     st.rerun()
 
         if status == "running":
+            render_deployment_metrics_panel(dep_id, hw)
             _render_inference_panel(dep_id, dep.get("endpoint_url"))
 
 

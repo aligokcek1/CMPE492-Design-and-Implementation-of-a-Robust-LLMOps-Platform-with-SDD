@@ -13,6 +13,7 @@ export LLMOPS_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Ferne
 # New monitoring env vars
 export LLMOPS_GRAFANA_SIGNING_SECRET="$(python -c 'import secrets; print(secrets.token_hex(32))')"
 export LLMOPS_PROMETHEUS_URL="http://localhost:9090"
+export LLMOPS_GRAFANA_PROMETHEUS_URL="http://prometheus:9090"
 export LLMOPS_GRAFANA_URL="http://localhost:3000"
 export LLMOPS_GRAFANA_ADMIN_USER="admin"
 export LLMOPS_GRAFANA_ADMIN_PASSWORD="admin"

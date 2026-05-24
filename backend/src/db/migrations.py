@@ -124,6 +124,38 @@ def ensure_schema() -> None:
     _rebuild_deployments_if_needed()
     Base.metadata.create_all(bind=get_engine())
     _apply_additive_column_migrations()
+    _ensure_deployment_monitoring_table()
+
+
+_DEPLOYMENT_MONITORING_DDL = """
+CREATE TABLE IF NOT EXISTS deployment_monitoring (
+    deployment_id            TEXT     NOT NULL PRIMARY KEY,
+    user_id                  TEXT     NOT NULL,
+    prometheus_scrape_job    TEXT     NOT NULL,
+    grafana_datasource_uid   TEXT     NOT NULL,
+    grafana_dashboard_uid    TEXT     NOT NULL,
+    status                   TEXT     NOT NULL DEFAULT 'active',
+    provisioned_at           DATETIME NOT NULL,
+    decommission_at          DATETIME,
+    created_at               DATETIME NOT NULL,
+    updated_at               DATETIME NOT NULL,
+    CHECK (status IN ('active', 'decommissioning'))
+)
+"""
+
+
+def _ensure_deployment_monitoring_table() -> None:
+    engine = get_engine()
+    inspector = inspect(engine)
+    if inspector.has_table("deployment_monitoring"):
+        return
+    logger.info("Creating `deployment_monitoring` table.")
+    with engine.begin() as conn:
+        conn.execute(text(_DEPLOYMENT_MONITORING_DDL))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_deployment_monitoring_user_id "
+            "ON deployment_monitoring (user_id)"
+        ))
 
 
 __all__ = ["ensure_schema"]

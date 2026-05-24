@@ -663,6 +663,32 @@ async def test_inference_happy_path_200(transport):
 
 
 @pytest.mark.asyncio
+async def test_inference_records_prometheus_metrics(transport, monkeypatch):
+    """Feature 010: successful inference increments proxy-emitted metrics."""
+    monkeypatch.setenv("LLMOPS_METRICS_DISABLED", "0")
+    dep_id = _seed_row("test_user", status="running")
+
+    with patch("src.services.metrics_recorder.record_success") as mock_record:
+        with patch("src.services.inference_proxy._forward_tgi", new_callable=AsyncMock) as mock_tgi:
+            from src.services.inference_proxy import _to_openai_chat_response
+
+            mock_tgi.return_value = _to_openai_chat_response("Hello world from metrics test")
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                headers = await _session_auth_headers(client)
+                resp = await client.post(
+                    f"/api/deployments/{dep_id}/inference",
+                    headers=headers,
+                    json={"messages": [{"role": "user", "content": "hi"}]},
+                )
+
+    assert resp.status_code == 200
+    mock_record.assert_called_once()
+    assert mock_record.call_args.kwargs["deployment_id"] == dep_id
+    assert mock_record.call_args.kwargs["user_id"] == "test_user"
+    assert mock_record.call_args.kwargs["token_count"] >= 1
+
+
+@pytest.mark.asyncio
 async def test_inference_when_not_running_returns_409(transport):
     dep_id = _seed_row("test_user", status="deploying")
 

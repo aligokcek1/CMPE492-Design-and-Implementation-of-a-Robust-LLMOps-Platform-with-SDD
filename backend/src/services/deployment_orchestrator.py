@@ -46,6 +46,7 @@ from .lightning_ai_provider import (
     LightningAIProvider,
     LightningAIServiceError,
 )
+from .monitoring_orchestrator import monitoring_orchestrator
 
 logger = logging.getLogger("llmops.orchestrator")
 
@@ -192,6 +193,7 @@ class DeploymentOrchestrator:
 
             set_status("running", "CPU inference server is ready.", endpoint_url=endpoint_url)
             logger.info("Deployment %s reached RUNNING at %s", deployment_id, endpoint_url)
+            _schedule_monitoring_provision(deployment_id)
         except asyncio.CancelledError:
             logger.info("Deployment %s was cancelled by user-initiated deletion.", deployment_id)
             raise
@@ -261,6 +263,7 @@ class DeploymentOrchestrator:
             if endpoint_url:
                 set_status("running", "GPU inference server live on Lightning AI.", endpoint_url=endpoint_url)
                 logger.info("GPU deployment %s reached RUNNING at %s", deployment_id, endpoint_url)
+                _schedule_monitoring_provision(deployment_id)
             else:
                 set_status("deploying", "Waiting for GPU node to come online on Lightning AI…")
 
@@ -325,6 +328,7 @@ class DeploymentOrchestrator:
                 status_message="GCP project deleted.",
                 deleted_at=datetime.now(UTC),
             )
+            _schedule_monitoring_decommission(deployment_id)
         except GCPNotFoundError:
             deployment_store.update_status(
                 deployment_id=deployment_id,
@@ -332,6 +336,7 @@ class DeploymentOrchestrator:
                 status_message="GCP project was already absent.",
                 deleted_at=datetime.now(UTC),
             )
+            _schedule_monitoring_decommission(deployment_id)
         except GCPProviderError as exc:
             logger.exception("Delete of deployment %s failed: %s", deployment_id, exc)
             deployment_store.update_status(
@@ -356,6 +361,7 @@ class DeploymentOrchestrator:
                 status_message="Deleted (deployment was never submitted to Lightning AI).",
                 deleted_at=datetime.now(UTC),
             )
+            _schedule_monitoring_decommission(deployment_id)
             return
 
         creds = await lightning_ai_credentials_store.get_credentials(user_id=row.user_id)
@@ -366,6 +372,7 @@ class DeploymentOrchestrator:
                 status_message="Deleted locally (Lightning AI credentials unavailable for remote teardown).",
                 deleted_at=datetime.now(UTC),
             )
+            _schedule_monitoring_decommission(deployment_id)
             return
 
         try:
@@ -380,6 +387,7 @@ class DeploymentOrchestrator:
                 status_message="Lightning AI GPU deployment stopped.",
                 deleted_at=datetime.now(UTC),
             )
+            _schedule_monitoring_decommission(deployment_id)
         except LightningAINotFoundError:
             deployment_store.update_status(
                 deployment_id=deployment_id,
@@ -387,6 +395,7 @@ class DeploymentOrchestrator:
                 status_message="Lightning AI deployment was already absent.",
                 deleted_at=datetime.now(UTC),
             )
+            _schedule_monitoring_decommission(deployment_id)
         except (LightningAIAuthError, LightningAIServiceError, Exception) as exc:  # noqa: BLE001
             logger.exception("Lightning AI delete of deployment %s failed: %s", deployment_id, exc)
             deployment_store.update_status(
@@ -453,6 +462,7 @@ class DeploymentOrchestrator:
                 status_message="Lightning AI deployment was removed externally.",
                 deleted_at=datetime.now(UTC),
             )
+            _schedule_monitoring_decommission(row.id)
             return
         except LightningAIAuthError as exc:
             logger.warning("Lightning AI auth error during status refresh for %s: %s", row.id, exc)
@@ -487,6 +497,22 @@ class DeploymentOrchestrator:
 
 
 deployment_orchestrator = DeploymentOrchestrator()
+
+
+def _schedule_monitoring_provision(deployment_id: str) -> None:
+    async def _run() -> None:
+        row = deployment_store.get(deployment_id)
+        if row is not None:
+            await monitoring_orchestrator.provision_for_running_deployment(row)
+
+    asyncio.create_task(_run())
+
+
+def _schedule_monitoring_decommission(deployment_id: str) -> None:
+    async def _run() -> None:
+        await monitoring_orchestrator.schedule_decommission(deployment_id)
+
+    asyncio.create_task(_run())
 
 
 # --------------------------------------------------------------------------- #

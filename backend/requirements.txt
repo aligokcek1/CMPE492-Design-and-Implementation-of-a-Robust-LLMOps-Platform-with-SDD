@@ -17,3 +17,4 @@ google-auth>=2.30
 kubernetes>=30.0
 lightning-sdk>=0.20.0
 litserve>=0.2.0
+prometheus-client>=0.20.0
