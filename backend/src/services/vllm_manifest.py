@@ -101,7 +101,7 @@ def generate(
                                 "--max-concurrent-requests",
                                 "16",
                                 "--max-batch-prefill-tokens",
-                                "2048",
+                                "4096",
                                 "--disable-custom-kernels",
                             ],
                             "env": [
