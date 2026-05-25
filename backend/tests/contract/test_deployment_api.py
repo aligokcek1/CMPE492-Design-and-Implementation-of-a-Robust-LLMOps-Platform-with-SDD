@@ -1088,10 +1088,11 @@ async def test_list_deployments_each_item_has_model_origin(transport):
 async def test_deploy_user_owned_model_with_unknown_pipeline_tag_allowed(transport):
     """If a user-uploaded model has pipeline_tag=unknown, deployment is allowed (bypass)."""
     from unittest.mock import patch as _patch
+
     from src.services import hf_models as _hf
 
     async def _unknown_gate(model_id, *, hf_token=None, timeout=10):
-        return False, "unknown", f"Model pipeline tag is 'unknown'"
+        return False, "unknown", "Model pipeline tag is 'unknown'"
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         headers = await _session_auth_headers(client)
@@ -1113,6 +1114,7 @@ async def test_deploy_user_owned_model_with_unknown_pipeline_tag_allowed(transpo
 async def test_deploy_third_party_model_with_unknown_pipeline_tag_rejected(transport):
     """A third-party model with pipeline_tag=unknown is still rejected (bypass only for owned)."""
     from unittest.mock import patch as _patch
+
     from src.services import hf_models as _hf
 
     async def _unknown_gate(model_id, *, hf_token=None, timeout=10):
@@ -1183,6 +1185,7 @@ async def test_deployment_response_does_not_contain_hf_token(
     )
 
     from sqlalchemy import inspect as sa_inspect
+
     from src.db import get_engine
 
     inspector = sa_inspect(get_engine())
@@ -1242,8 +1245,9 @@ async def test_deploy_hf_hub_slow_times_out_with_hf_hub_unreachable(transport):
         await asyncio.sleep(0)  # yield; real impl uses HfApi(timeout=timeout)
         return False, "unreachable", "HuggingFace Hub is currently unreachable, please retry."
 
-    from src.services import hf_models
     from unittest.mock import patch as _patch
+
+    from src.services import hf_models
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         headers = await _session_auth_headers(client)

@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 
 import pytest
-from cryptography.fernet import Fernet
 
 
 @pytest.fixture

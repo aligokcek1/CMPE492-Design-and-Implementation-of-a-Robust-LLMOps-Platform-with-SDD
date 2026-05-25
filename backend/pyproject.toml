@@ -6,7 +6,7 @@ extend-exclude = ["data/", ".venv/", "__pycache__/"]
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "SLF"]
 # B008 — FastAPI idiom is `Depends()` in argument defaults; disabling it repo-wide keeps routes readable.
-ignore = ["E501", "B008"]
+ignore = ["E501", "B008", "B904"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["SLF001"]

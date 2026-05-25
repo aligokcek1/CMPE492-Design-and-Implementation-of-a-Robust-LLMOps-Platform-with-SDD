@@ -332,7 +332,7 @@ class RealGCPProvider(GCPProvider):
                         f"Billing account '{billing_account_id}' cannot accept another "
                         "linked project — its per-account quota for concurrent billed "
                         "projects has been reached. This is a common ceiling on "
-                        "free-trial (\$300-credit) accounts, which are typically capped "
+                        r"free-trial (\$300-credit) accounts, which are typically capped "
                         "at 5 simultaneously-billed projects.\n\n"
                         "Fix by deleting dangling projects this billing account is still "
                         "linked to:\n\n"
