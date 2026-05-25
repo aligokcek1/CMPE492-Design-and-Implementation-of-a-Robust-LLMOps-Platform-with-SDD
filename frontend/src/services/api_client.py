@@ -1,7 +1,9 @@
-import requests
+import os
 from typing import Any
 
-BACKEND_URL = "http://localhost:8000"
+import requests
+
+BACKEND_URL = os.environ.get("LLMOPS_BACKEND_URL", "http://localhost:8000")
 
 
 class APIError(Exception):

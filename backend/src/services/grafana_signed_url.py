@@ -29,7 +29,10 @@ class GrafanaSignedUrlService:
             secret = "dev-only-signing-secret-change-me"
         self._secret = secret.encode("utf-8")
         self._ttl_seconds = ttl_seconds or int(os.environ.get("LLMOPS_GRAFANA_LINK_TTL_SECONDS", "900"))
-        self._grafana_url = (grafana_url or os.environ.get("LLMOPS_GRAFANA_URL", "http://localhost:3000")).rstrip("/")
+        public = os.environ.get("LLMOPS_GRAFANA_PUBLIC_URL") or os.environ.get(
+            "LLMOPS_GRAFANA_URL", "http://localhost:3000"
+        )
+        self._grafana_url = (grafana_url or public).rstrip("/")
         self._backend_public_url = (
             backend_public_url or os.environ.get("LLMOPS_BACKEND_PUBLIC_URL", "http://localhost:8000")
         ).rstrip("/")

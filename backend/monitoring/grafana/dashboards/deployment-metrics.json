@@ -46,7 +46,7 @@
       "targets": [
         {
           "expr": "100 * llmops_hardware_cpu_utilization{deployment_id=\"$deployment_id\", user_id=\"$user_id\"}",
-          "legendFormat": "CPU (pod or host)"
+          "legendFormat": "CPU (pod / host)"
         }
       ]
     },

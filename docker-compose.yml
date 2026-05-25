@@ -1,0 +1,85 @@
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./backend/monitoring/prometheus.docker.yml:/etc/prometheus/prometheus.yml:ro
+      - llmops_scrape:/etc/prometheus/scrape.d:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      LLMOPS_USE_FAKE_GCP: ${LLMOPS_USE_FAKE_GCP:-0}
+      LLMOPS_PROMETHEUS_URL: http://prometheus:9090
+      LLMOPS_PROMETHEUS_RELOAD_URL: http://prometheus:9090/-/reload
+      LLMOPS_PROMETHEUS_SCRAPE_DIR: /app/monitoring/scrape.d
+      LLMOPS_GRAFANA_URL: http://grafana:3000
+      LLMOPS_GRAFANA_PUBLIC_URL: http://localhost:3000
+      LLMOPS_GRAFANA_PROMETHEUS_URL: http://prometheus:9090
+      LLMOPS_GRAFANA_ADMIN_USER: admin
+      LLMOPS_GRAFANA_ADMIN_PASSWORD: admin
+      LLMOPS_BACKEND_PUBLIC_URL: http://localhost:8000
+    volumes:
+      - llmops_data:/app/data
+      - llmops_secrets:/app/secrets
+      - llmops_scrape:/app/monitoring/scrape.d
+    depends_on:
+      - prometheus
+      - grafana
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "8501:8501"
+    environment:
+      LLMOPS_BACKEND_URL: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  llmops_data:
+  llmops_secrets:
+  llmops_scrape:
+  prometheus_data:
+  grafana_data:
