@@ -1,7 +1,7 @@
 # LLMOps Platform
 
-[![License: BSD-2-Clause](https://img.shields.io/badge/License-BSD%202--Clause-blue.svg)](LICENSE)
-[![CI](https://github.com/aligokcek1/CMPE492-Design-and-Implementation-of-a-Robust-LLMOps-Platform-with-SDD/actions/workflows/ci.yml/badge.svg)](https://github.com/aligokcek1/CMPE492-Design-and-Implementation-of-a-Robust-LLMOps-Platform-with-SDD/actions/workflows/ci.yml)
+[License: BSD-2-Clause](LICENSE)
+[CI](https://github.com/aligokcek1/CMPE492-Design-and-Implementation-of-a-Robust-LLMOps-Platform-with-SDD/actions/workflows/ci.yml)
 
 Event-driven pipeline for LLM lifecycle management: upload models, deploy to GKE (CPU) or Lightning AI (GPU), run inference, and monitor TTFT/throughput via Prometheus and Grafana.
 
@@ -17,21 +17,25 @@ From the repo root, one command starts the backend, frontend, Prometheus, and Gr
 docker compose up -d --build
 ```
 
-| Service    | URL |
-|------------|-----|
-| Dashboard  | http://localhost:8501 |
-| API        | http://localhost:8000 |
-| Prometheus | http://localhost:9090 |
-| Grafana    | http://localhost:3000 |
+
+| Service    | URL                                            |
+| ---------- | ---------------------------------------------- |
+| Dashboard  | [http://localhost:8501](http://localhost:8501) |
+| API        | [http://localhost:8000](http://localhost:8000) |
+| Prometheus | [http://localhost:9090](http://localhost:9090) |
+| Grafana    | [http://localhost:3000](http://localhost:3000) |
+
 
 ### Grafana login
 
-Grafana shows a login screen the first time you open it (for example from **Open in Grafana** on a running deployment, or by visiting http://localhost:3000 directly). Use these default credentials:
+Grafana shows a login screen the first time you open it (for example from **Open in Grafana** on a running deployment, or by visiting [http://localhost:3000](http://localhost:3000) directly). Use these default credentials:
 
-| Field | Value |
-|-------|-------|
+
+| Field        | Value   |
+| ------------ | ------- |
 | **Username** | `admin` |
 | **Password** | `admin` |
+
 
 These match the `GF_SECURITY_ADMIN_USER` / `GF_SECURITY_ADMIN_PASSWORD` values in `docker-compose.yml`. Grafana may prompt you to change the password on first login — you can skip that for local development or set a new one if you prefer.
 
@@ -101,7 +105,7 @@ export LLMOPS_GRAFANA_ADMIN_PASSWORD="admin"
 docker compose -f docker-compose.monitoring.yml up -d
 ```
 
-Grafana: http://localhost:3000 — login with username **`admin`** and password **`admin`** (same as the Docker quick start above).
+Grafana: [http://localhost:3000](http://localhost:3000) — login with username `**admin**` and password `**admin**` (same as the Docker quick start above).
 
 **Terminal 2 — backend**
 
@@ -133,10 +137,12 @@ Contract tests use fake cloud providers — no GCP or Lightning AI calls.
 
 GitHub Actions runs on every push and pull request:
 
-| Workflow | Trigger | What it does |
-|----------|---------|--------------|
-| [CI](.github/workflows/ci.yml) | push, PR, version tags | Backend + frontend pytest, Ruff lint/format, then Docker Compose build & smoke test |
+
+| Workflow                       | Trigger                                    | What it does                                                                               |
+| ------------------------------ | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| [CI](.github/workflows/ci.yml) | push, PR, version tags                     | Backend + frontend pytest, Ruff lint/format, then Docker Compose build & smoke test        |
 | [CD](.github/workflows/cd.yml) | after green CI on `main`/`v*` tags, manual | Builds and pushes `llmops-backend` / `llmops-frontend` images to GitHub Container Registry |
+
 
 Pull images after a successful `main` build:
 
@@ -149,12 +155,14 @@ Replace `<owner>` with your GitHub username or org. Package visibility follows y
 
 ## More detail
 
-- Backend env vars, routes, GCP prerequisites: [`backend/README.md`](backend/README.md)
-- Metrics monitoring E2E: [`specs/010-prometheus-grafana-monitoring/quickstart.md`](specs/010-prometheus-grafana-monitoring/quickstart.md)
+- Detailed report: `[docs/report.pdf](docs/report.pdf)`
+- Academic poster presentation: `[docs/poster.pdf](docs/poster.pdf)`
+- Backend env vars, routes, GCP prerequisites: `[backend/README.md](backend/README.md)`
+- Metrics monitoring E2E: `[specs/010-prometheus-grafana-monitoring/quickstart.md](specs/010-prometheus-grafana-monitoring/quickstart.md)`
 
 ## License
 
-This project is licensed under the **BSD 2-Clause License**. See [`LICENSE`](LICENSE) for the full text.
+This project is licensed under the **BSD 2-Clause License**. See `[LICENSE](LICENSE)` for the full text.
 
 Copyright (c) 2026, Ali GÖKÇEK
 
